@@ -246,6 +246,11 @@ export default function VerifierPage() {
                                     <h2 className={`text-3xl font-black uppercase tracking-widest ${style.text}`}>
                                         {verificationResult.decision.replace(/([A-Z])/g, ' $1').trim()}
                                     </h2>
+                                    {verificationResult.decision === 'NotRegistered' && (
+                                        <p className="text-red-400/80 text-sm mt-2 max-w-md mx-auto font-medium">
+                                            ⚠️ This document could not be verified on the blockchain. It may be a fraudulent forgery, structurally tampered with, or not yet officially issued by the institution. Please report to the issuer.
+                                        </p>
+                                    )}
                                     <div className="flex flex-wrap justify-center gap-4 mt-4">
                                         <div className="px-4 py-2 rounded-full bg-black/30 border border-white/10 text-xs font-bold">
                                             🔐 Blockchain: <span className={matchType !== 'none' ? 'text-green-400' : 'text-red-400'}>
