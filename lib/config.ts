@@ -7,10 +7,10 @@ export const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "";
 if (!projectId) throw new Error("Project ID is not defined");
 
 export const metadata = {
-  name: "Web3Modal Example",
-  description: "Web3Modal Example",
-  url: "https://web3modal.com",
-  icons: ["https://avatars.githubusercontent.com/u/37784886"],
+  name: "Trustless Attestation Protocol",
+  description: "AI-Backed Trustless Credential Attestation",
+  url: "http://localhost:3000",
+  icons: ["/New Project 100 [31F474F].png"],
 };
 
 export const config = defaultWagmiConfig({

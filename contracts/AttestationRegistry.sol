@@ -3,15 +3,25 @@ pragma solidity ^0.8.0;
 
 /**
  * @title AttestationRegistry
- * @dev A simple contract to store and verify document hashes (attestations).
+ * @dev A contract to store and verify document hashes and Merkle roots (batch attestations).
  */
 contract AttestationRegistry {
     address public owner;
     mapping(address => bool) public authorizedIssuers;
-    mapping(bytes32 => address) public attestations;
+    
+    // Struct to store attestation metadata
+    struct AttestationRecord {
+        address issuer;
+        uint256 timestamp;
+        bool exists;
+    }
 
-    // Events to track actions
-    event AttestationStored(bytes32 indexed hash, address indexed issuer);
+    // Mapping for both single hashes and Merkle roots
+    mapping(bytes32 => AttestationRecord) public attestations;
+
+    // Events
+    event AttestationStored(bytes32 indexed hash, address indexed issuer, uint256 timestamp);
+    event BatchAttestationStored(bytes32 indexed merkleRoot, address indexed issuer, uint256 timestamp);
     event AttestationRevoked(bytes32 indexed hash, address indexed issuer);
     event IssuerAuthorized(address indexed issuer);
     event IssuerDeauthorized(address indexed issuer);
@@ -42,31 +52,60 @@ contract AttestationRegistry {
     }
 
     /**
-     * @dev Stores an attestation for a given hash.
+     * @dev Stores an attestation for a single given hash.
      * @param hash The Keccak256 hash of the document.
      */
-    function attest(bytes32 hash) public onlyAuthorized {
-        require(attestations[hash] == address(0), "Attestation already exists");
-        attestations[hash] = msg.sender;
-        emit AttestationStored(hash, msg.sender);
+    function registerSingle(bytes32 hash) public onlyAuthorized {
+        require(!attestations[hash].exists, "Attestation already exists");
+        attestations[hash] = AttestationRecord({
+            issuer: msg.sender,
+            timestamp: block.timestamp,
+            exists: true
+        });
+        emit AttestationStored(hash, msg.sender, block.timestamp);
     }
 
     /**
-     * @dev Verifies if an attestation exists for a given hash.
-     * @param hash The Keccak256 hash of the document.
+     * @dev Stores an attestation for a batch of documents using a Merkle Root.
+     * @param merkleRoot The Keccak256 Merkle root of the document hashes.
+     */
+    function registerBatch(bytes32 merkleRoot) public onlyAuthorized {
+        require(!attestations[merkleRoot].exists, "Batch attestation already exists");
+        attestations[merkleRoot] = AttestationRecord({
+            issuer: msg.sender,
+            timestamp: block.timestamp,
+            exists: true
+        });
+        emit BatchAttestationStored(merkleRoot, msg.sender, block.timestamp);
+    }
+
+    /**
+     * @dev Verifies if an attestation (single or batch) exists.
+     * @param hashOrRoot The Keccak256 hash or Merkle root.
      * @return bool True if it exists, false otherwise.
      */
-    function verify(bytes32 hash) public view returns (bool) {
-        return attestations[hash] != address(0);
+    function verify(bytes32 hashOrRoot) public view returns (bool) {
+        return attestations[hashOrRoot].exists;
     }
 
     /**
-     * @dev Revokes an attestation (only by the original issuer).
-     * @param hash The Keccak256 hash of the document.
+     * @dev Gets the details of an attestation.
+     * @param hashOrRoot The Keccak256 hash or Merkle root.
      */
-    function revoke(bytes32 hash) public {
-        require(attestations[hash] == msg.sender, "Only the issuer can revoke");
-        delete attestations[hash];
-        emit AttestationRevoked(hash, msg.sender);
+    function getAttestation(bytes32 hashOrRoot) public view returns (address, uint256) {
+        require(attestations[hashOrRoot].exists, "Attestation not found");
+        return (attestations[hashOrRoot].issuer, attestations[hashOrRoot].timestamp);
+    }
+
+    /**
+     * @dev Revokes an attestation (only by the original issuer or owner).
+     * @param hashOrRoot The Keccak256 hash or Merkle root to revoke.
+     */
+    function revoke(bytes32 hashOrRoot) public {
+        require(attestations[hashOrRoot].exists, "Attestation does not exist");
+        require(attestations[hashOrRoot].issuer == msg.sender || msg.sender == owner, "Only the issuer or owner can revoke");
+        
+        delete attestations[hashOrRoot];
+        emit AttestationRevoked(hashOrRoot, msg.sender);
     }
 }

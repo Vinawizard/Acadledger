@@ -166,7 +166,7 @@ export default function VerifyPage() {
             <div className="p-1.5 rounded-lg bg-cyber-gradient group-hover:scale-110 transition-transform duration-300">
               <Shield className="h-5 w-5 text-white" />
             </div>
-            <span className="text-xl font-bold tracking-tight">AcadLedger</span>
+            <span className="text-xl font-bold tracking-tight">Trustless Attestation</span>
             <span className="text-[10px] font-mono bg-white/5 text-slate-400 px-1.5 py-0.5 rounded border border-white/10 ml-2 uppercase">Protocol</span>
           </Link>
           <nav className="flex items-center gap-6">
@@ -332,7 +332,7 @@ export default function VerifyPage() {
         <div className="container flex flex-col items-center gap-4 opacity-40 grayscale hover:grayscale-0 hover:opacity-100 transition-all duration-700">
           <div className="flex items-center gap-2">
             <Shield className="h-5 w-5 text-purple-400" />
-            <span className="text-xs font-bold tracking-tight text-white uppercase italic">AcadLedger Autonomous Verification Node</span>
+            <span className="text-xs font-bold tracking-tight text-white uppercase italic">Trustless Attestation Verification Node</span>
           </div>
           <p className="text-[8px] font-mono text-slate-500 uppercase tracking-widest">
             NODE_STATE: SYNCHRONIZED • AMOY_TESTNET • ZKEVM_PROOFS

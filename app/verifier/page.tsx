@@ -1,32 +1,27 @@
 "use client"
 import Link from "next/link";
-import { useState, ChangeEvent, useEffect } from "react";
+import { useState, ChangeEvent } from "react";
 import { Button } from "@/components/ui/button";
 import {
-    Shield,
-    Upload,
-    Brain,
-    Cpu,
-    CheckCircle,
-    AlertCircle,
-    Loader2,
-    Hash,
-    FileCheck,
-    Sparkles,
-    Search,
-    ShieldCheck,
-    ArrowRight
+    Shield, Upload, Brain, Cpu, CheckCircle, AlertCircle, Loader2, Hash, ShieldCheck, Info
 } from "lucide-react";
 import { useWeb3Modal } from "@web3modal/wagmi/react";
 import { useAccount } from 'wagmi'
-import { parseDocumentWithAI, ExtractedDocumentData } from "@/lib/ai-utils";
-import { hashStudentData, createCanonicalData } from "@/lib/privacy-utils";
+import { parseDocumentWithAI } from "@/lib/ai-utils";
+import { createCanonicalData, hashDocumentData, hashFileBytes } from "@/lib/privacy-utils";
 import { verifyOnChain } from "@/lib/blockchain";
-import axios from "axios";
-import { ethers } from "ethers";
-import { abi } from "@/lib/contract";
+import { evaluatePolicy, DEFAULT_POLICY, VerificationPolicy, VerificationResult, AIExtractionResult, FinalDecision } from "@/lib/types";
+import { verifyMerkleProof } from "@/lib/merkle-utils";
+import Navbar from "@/components/navbar";
 
-type VerifierStep = 'idle' | 'analyzing' | 'report' | 'verifying' | 'result';
+type VerifierStep = 'idle' | 'analyzing' | 'report';
+
+const DECISION_STYLES: Record<FinalDecision, { bg: string; border: string; text: string; icon: typeof CheckCircle }> = {
+    'Verified': { bg: 'bg-green-500/10', border: 'border-green-500/30', text: 'text-green-400', icon: CheckCircle },
+    'VerifiedWithWarning': { bg: 'bg-amber-500/10', border: 'border-amber-500/30', text: 'text-amber-400', icon: AlertCircle },
+    'PolicyWarning': { bg: 'bg-orange-500/10', border: 'border-orange-500/30', text: 'text-orange-400', icon: Info },
+    'NotRegistered': { bg: 'bg-red-500/10', border: 'border-red-500/30', text: 'text-red-400', icon: AlertCircle },
+};
 
 export default function VerifierPage() {
     const { open } = useWeb3Modal();
@@ -35,54 +30,134 @@ export default function VerifierPage() {
     const [step, setStep] = useState<VerifierStep>('idle');
     const [uploadedPreview, setUploadedPreview] = useState<string | null>(null);
     const [fileType, setFileType] = useState<string | null>(null);
-    const [analysis, setAnalysis] = useState<ExtractedDocumentData | null>(null);
-    const [blockchainStatus, setBlockchainStatus] = useState<"IDLE" | "VALID" | "INVALID" | "ERROR">("IDLE");
     const [network, setNetwork] = useState<"PUBLIC" | "LOCAL">("PUBLIC");
-    const [showJson, setShowJson] = useState(false);
-    const [analysisJson, setAnalysisJson] = useState<string | null>(null);
 
-    const handleFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    // 3-step engine results
+    const [aiResult, setAiResult] = useState<AIExtractionResult | null>(null);
+    const [strictHash, setStrictHash] = useState<string | null>(null);
+    const [easyHash, setEasyHash] = useState<string | null>(null);
+    const [proofFile, setProofFile] = useState<File | null>(null);
+    const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
+    type MatchType = 'strict_direct' | 'easy_direct' | 'strict_merkle' | 'easy_merkle' | 'none';
+    const [matchType, setMatchType] = useState<MatchType>('none');
+    const [matchedHash, setMatchedHash] = useState<string | null>(null);
+    const [merkleRoot, setMerkleRoot] = useState<string | null>(null);
+    const [verificationResult, setVerificationResult] = useState<VerificationResult | null>(null);
+    const [policy, setPolicy] = useState<VerificationPolicy>(DEFAULT_POLICY);
+
+    const handleProofFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files?.[0]) setProofFile(e.target.files[0]);
+    };
+
+    const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
 
-        setBlockchainStatus("IDLE");
-        setAnalysis(null);
+        setSelectedFile(file);
         setFileType(file.type);
+        setStep('idle');
+
+        // Reset old results
+        setAiResult(null);
+        setStrictHash(null);
+        setEasyHash(null);
+        setMatchType('none');
+        setMatchedHash(null);
+        setMerkleRoot(null);
+        setVerificationResult(null);
 
         const reader = new FileReader();
         reader.onload = (e) => setUploadedPreview(e.target?.result as string);
         reader.readAsDataURL(file);
+    };
 
+    const runVerification = async () => {
+        if (!selectedFile) return;
         setStep('analyzing');
+
         try {
-            const localData = await parseDocumentWithAI(file);
-
-            let finalHash = "";
-            let fraudStatus = localData.isFraudulent;
-            let reason = localData.fraudReason;
-
-            try {
-                const formData = new FormData();
-                formData.append("pdf", file);
-                const response = await axios.post("https://ledger.palatepals.com/verify", formData, {
-                    headers: { "Content-Type": "multipart/form-data" },
-                    timeout: 8000
-                });
-                finalHash = response.data.hash;
-                fraudStatus = response.data.isFraudulent || (response.data.similarity !== "100%");
-                reason = response.data.fraudReason || (response.data.similarity !== "100%" ? `Similarity check failed (${response.data.similarity})` : undefined);
-            } catch (err) {
-                const canonical = createCanonicalData(
-                    localData.recipientName || "UNKNOWN",
-                    localData.recipientId || "UNKNOWN",
-                    localData.documentType || "UNKNOWN"
-                );
-                finalHash = hashStudentData(canonical);
+            // Read optional proof file if provided
+            let proofData: { merkleRoot: string, proofs?: any[], merkleProofs?: any[] } | null = null;
+            if (proofFile) {
+                const proofText = await proofFile.text();
+                try { proofData = JSON.parse(proofText); } catch { console.warn("Invalid proof file JSON"); }
+            } else {
+                // Fallback to session storage if they just issued it in the same browser (for demo flow)
+                const sessionData = sessionStorage.getItem('tap_merkle_data');
+                if (sessionData) {
+                    try { proofData = JSON.parse(sessionData); } catch { }
+                }
             }
 
-            const enriched = { ...localData, hash: finalHash, isFraudulent: fraudStatus, fraudReason: reason };
-            setAnalysis(enriched);
-            setAnalysisJson(JSON.stringify({ protocol: "AcadLedger_V2", analysis: enriched, timestamp: new Date().toISOString() }, null, 2));
+            // ═══ STRICT MODE HASH (File Bytes) ═══
+            const calculatedStrictHash = await hashFileBytes(selectedFile);
+            setStrictHash(calculatedStrictHash);
+
+            // ═══ EASY MODE HASH (AI JSON) ═══
+            const extraction = await parseDocumentWithAI(selectedFile);
+            setAiResult(extraction);
+            const canonical = createCanonicalData(extraction.structuredData);
+            const calculatedEasyHash = hashDocumentData(canonical);
+            setEasyHash(calculatedEasyHash);
+
+            // ═══ CRYPTOGRAPHIC CHECK ═══
+            let currentMatch: MatchType = 'none';
+            let finalHash: string | null = null;
+            let finalMerkleRoot: string | null = null;
+
+            const actualProofs = proofData ? (proofData.merkleProofs || proofData.proofs) : null;
+
+            // 1. Try Strict Direct
+            if (await verifyOnChain(calculatedStrictHash)) {
+                currentMatch = 'strict_direct';
+                finalHash = calculatedStrictHash;
+            }
+            // 2. Try Easy Direct
+            else if (await verifyOnChain(calculatedEasyHash)) {
+                currentMatch = 'easy_direct';
+                finalHash = calculatedEasyHash;
+            }
+            // 3. Try Merkle (Strict then Easy)
+            else if (proofData && actualProofs) {
+                const { merkleRoot } = proofData;
+                const strictMatch = actualProofs.find((p: any) => p.leafHash === calculatedStrictHash);
+                const easyMatch = actualProofs.find((p: any) => p.leafHash === calculatedEasyHash);
+
+                if (strictMatch && verifyMerkleProof(strictMatch.proof, calculatedStrictHash, merkleRoot) && await verifyOnChain(merkleRoot)) {
+                    currentMatch = 'strict_merkle';
+                    finalHash = calculatedStrictHash;
+                    finalMerkleRoot = merkleRoot;
+                } else if (easyMatch && verifyMerkleProof(easyMatch.proof, calculatedEasyHash, merkleRoot) && await verifyOnChain(merkleRoot)) {
+                    currentMatch = 'easy_merkle';
+                    finalHash = calculatedEasyHash;
+                    finalMerkleRoot = merkleRoot;
+                }
+            }
+
+            setMatchType(currentMatch);
+            setMatchedHash(finalHash);
+            setMerkleRoot(finalMerkleRoot);
+
+            // ═══ STEP 3: Policy Engine ═══
+            let activePolicy = DEFAULT_POLICY;
+            try {
+                if (proofData && (proofData as any).policy) {
+                    activePolicy = (proofData as any).policy;
+                } else {
+                    const stored = sessionStorage.getItem('tap_verify_data');
+                    if (stored) {
+                        const parsed = JSON.parse(stored);
+                        if (parsed.policy) activePolicy = parsed.policy;
+                    }
+                }
+            } catch { /* use default */ }
+            setPolicy(activePolicy);
+
+            const isVerifiedOnChain = currentMatch !== 'none';
+            const result = evaluatePolicy(isVerifiedOnChain, extraction, activePolicy);
+            setVerificationResult(result);
+
             setStep('report');
         } catch (error) {
             console.error(error);
@@ -90,91 +165,32 @@ export default function VerifierPage() {
         }
     };
 
-    const handleVerifyOnChain = async () => {
-        if (!analysis?.hash) return;
-        setStep('verifying');
-        try {
-            // Respect selected network
-            const rpc = network === "PUBLIC"
-                ? "https://rpc-amoy.polygon.technology/"
-                : "http://localhost:8549";
-
-            const provider = new ethers.JsonRpcProvider(rpc);
-            const contract = new ethers.Contract(
-                process.env.NEXT_PUBLIC_DASHBOARD_CONTRACT_ADDRESS || "0xA09916427843c35a233BF355bFAF1C735F9e75fa",
-                abi,
-                provider
-            );
-
-            const result = await contract.verifyDocument(analysis.hash);
-            setBlockchainStatus(result[0] ? "VALID" : "INVALID");
-            setStep('result');
-        } catch (error) {
-            console.error(error);
-            setBlockchainStatus("ERROR");
-            setStep('result');
-        }
-    };
-
     const reset = () => {
         setStep('idle');
         setUploadedPreview(null);
-        setAnalysis(null);
-        setBlockchainStatus("IDLE");
+        setAiResult(null);
+        setStrictHash(null);
+        setEasyHash(null);
+        setMatchType('none');
+        setMatchedHash(null);
+        setMerkleRoot(null);
+        setVerificationResult(null);
     };
 
     return (
-        <div className="flex flex-col min-h-screen bg-[#020617] text-slate-50">
+        <div className="flex flex-col min-h-screen" style={{ backgroundColor: 'var(--page-bg)', color: 'var(--text-primary)' }}>
             <div className="fixed inset-0 overflow-hidden pointer-events-none">
-                <div className="absolute top-[20%] left-[10%] w-[35%] h-[35%] bg-cyan-600/5 blur-[100px] rounded-full" />
-                <div className="absolute bottom-[20%] right-[10%] w-[35%] h-[35%] bg-purple-600/5 blur-[100px] rounded-full" />
+                <div className="absolute top-[20%] left-[10%] w-[35%] h-[35%] blur-[100px] rounded-full" style={{ background: 'var(--glow-2)' }} />
+                <div className="absolute bottom-[20%] right-[10%] w-[35%] h-[35%] blur-[100px] rounded-full" style={{ background: 'var(--glow-1)' }} />
             </div>
 
-            <header className="sticky top-0 z-50 bg-black/20 backdrop-blur-2xl transition-all duration-300">
-                <div className="absolute inset-x-0 bottom-0 h-[1px] bg-gradient-to-r from-transparent via-white/10 to-transparent" />
-                <div className="container flex h-16 items-center justify-between">
-                    <Link href="/" className="flex items-center gap-3 group">
-                        <div className="relative h-10 w-10 p-1 rounded-full bg-white/5 flex items-center justify-center border border-white/10 group-hover:scale-110 transition-all duration-500 shadow-2xl group-hover:shadow-cyan-500/10">
-                            <img src="/New Project 100 [31F474F].png" alt="Logo" className="w-full h-full object-cover" />
-                        </div>
-                        <div className="flex flex-col">
-                            <span className="text-xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-white/40">AcadLedger</span>
-                            <span className="text-[8px] font-sans text-cyan-400 tracking-[0.2em] uppercase opacity-60">Global Protocol</span>
-                        </div>
-                    </Link>
-
-                    <nav className="hidden md:flex items-center gap-8">
-                        <Link href="/explorer" className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 hover:text-cyan-400 transition-colors">Explorer</Link>
-                        <Link href="/verifier" className="text-[10px] font-black uppercase tracking-[0.2em] text-white transition-colors border-b border-cyan-500/50 pb-1">Verify</Link>
-                        <Link href="/dashboard" className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 hover:text-cyan-400 transition-colors">Dashboard</Link>
-                    </nav>
-
-                    <div className="flex bg-white/5 border border-white/10 rounded-2xl p-1 gap-1">
-                        <button
-                            onClick={() => setNetwork("PUBLIC")}
-                            className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${network === "PUBLIC" ? 'bg-cyan-500 text-white shadow-lg shadow-cyan-500/20' : 'text-slate-500 hover:text-slate-300'}`}
-                        >
-                            Amoy
-                        </button>
-                        <button
-                            onClick={() => setNetwork("LOCAL")}
-                            className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${network === "LOCAL" ? 'bg-purple-500 text-white shadow-lg shadow-purple-500/20' : 'text-slate-500 hover:text-slate-300'}`}
-                        >
-                            Node
-                        </button>
-                    </div>
-
-                    <Button onClick={() => open()} variant="outline" className="border-white/5 bg-white/5 rounded-2xl h-11 px-6 font-bold tracking-wide">
-                        {address ? `${address.slice(0, 6)}...${address.slice(-4)}` : "Connect Authority"}
-                    </Button>
-                </div>
-            </header>
+            <Navbar />
 
             <main className="flex-1 relative z-10 container py-12 max-w-5xl">
                 <div className="text-center mb-12">
                     <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-4 bg-clip-text text-transparent bg-gradient-to-r from-white to-white/40">Public Verification</h1>
                     <p className="text-slate-400 max-w-2xl mx-auto text-lg font-light">
-                        Upload any issued certificate to perform an <span className="text-cyan-400 font-medium">AI Visual Audit</span> and <span className="text-purple-400 font-medium">On-Chain Authentication</span>.
+                        Upload any credential for <span className="text-cyan-400 font-medium">3-Layer Verification</span>: Cryptographic → AI Advisory → Policy Engine.
                     </p>
                 </div>
 
@@ -186,7 +202,7 @@ export default function VerifierPage() {
                                     <div className="absolute inset-x-0 top-0 h-1 bg-cyan-400 shadow-[0_0_20px_cyan] animate-scan z-10" />
                                     <div className="absolute inset-0 flex items-center justify-center flex-col gap-3">
                                         <Brain className="h-10 w-10 text-cyan-400 animate-pulse" />
-                                        <span className="text-xs font-sans font-bold tracking-[0.3em] text-cyan-400 uppercase">Analyzing_Pixels...</span>
+                                        <span className="text-xs font-sans font-bold tracking-[0.3em] text-cyan-400 uppercase">Running_3_Layer_Engine...</span>
                                     </div>
                                 </div>
                                 <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
@@ -198,152 +214,199 @@ export default function VerifierPage() {
                                 <div className="h-28 w-28 bg-white/5 rounded-[2.5rem] flex items-center justify-center mb-8 border border-white/10">
                                     <Upload className="h-12 w-12 text-slate-400" />
                                 </div>
-                                <label className="w-full max-w-md">
-                                    <Button asChild className="w-full h-16 rounded-2xl bg-white/5 border border-white/10 text-white font-bold text-lg cursor-pointer">
-                                        <span>Select Official Document</span>
+                                <div className="w-full max-w-md space-y-4">
+                                    <label className="block w-full">
+                                        <Button asChild className="w-full h-16 rounded-2xl bg-white/5 border border-white/10 text-white font-bold text-lg cursor-pointer hover:bg-white/10">
+                                            <span>{selectedFile ? `📄 ${selectedFile.name}` : 'Select Credential to Verify'}</span>
+                                        </Button>
+                                        <input type="file" accept="image/*,.pdf" onChange={handleFileChange} className="hidden" />
+                                    </label>
+                                    <label className="block w-full">
+                                        <Button asChild className={`w-full h-12 rounded-xl border font-bold text-xs tracking-widest uppercase cursor-pointer transition-colors ${proofFile ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400' : 'bg-[#020617]/50 border-white/5 text-slate-500 hover:text-slate-300'}`}>
+                                            <span>{proofFile ? `📄 Proof: ${proofFile.name}` : 'Attach Merkle Proof .json (Optional)'}</span>
+                                        </Button>
+                                        <input type="file" accept=".json" onChange={handleProofFileChange} className="hidden" />
+                                    </label>
+                                    <Button onClick={runVerification} disabled={!selectedFile} className="w-full h-16 rounded-[1.5rem] bg-cyber-gradient text-white font-bold text-xl shadow-2xl shadow-purple-500/30 hover:scale-[1.03] transition-all disabled:opacity-50 disabled:grayscale disabled:hover:scale-100 disabled:cursor-not-allowed mt-4">
+                                        Verify Documentation
                                     </Button>
-                                    <input type="file" accept="image/*,.pdf" onChange={handleFileChange} className="hidden" />
-                                </label>
+                                </div>
                             </>
                         )}
                     </div>
                 ) : (
                     <div className="space-y-10 animate-in fade-in slide-in-from-bottom-5 duration-700">
-                        <div className="grid lg:grid-cols-2 gap-10">
-                            {/* AI Report */}
-                            <div className="glassmorphism p-8 rounded-[2.5rem] border-white/10">
-                                <div className="flex items-center gap-4 mb-8">
-                                    <Brain className="h-6 w-6 text-cyan-400" />
-                                    <h3 className="text-xl font-black tracking-widest uppercase">AI_Visual_Audit</h3>
-                                </div>
-                                {analysis?.isFraudulent ? (
-                                    <div className="p-8 rounded-[2rem] bg-red-500/5 border border-red-500/20 text-center space-y-6">
-                                        <AlertCircle className="h-10 w-10 text-red-500 mx-auto" />
-                                        <h4 className="text-2xl font-bold text-red-500">Tampering Detected</h4>
-                                        <p className="text-red-400/80 text-sm font-mono uppercase">{analysis.fraudReason}</p>
+                        {/* ═══ FINAL DECISION BANNER ═══ */}
+                        {verificationResult && (() => {
+                            const style = DECISION_STYLES[verificationResult.decision];
+                            const Icon = style.icon;
+                            return (
+                                <div className={`p-8 rounded-[2.5rem] border-2 ${style.bg} ${style.border} text-center space-y-4`}>
+                                    <Icon className={`h-14 w-14 mx-auto ${style.text}`} />
+                                    <h2 className={`text-3xl font-black uppercase tracking-widest ${style.text}`}>
+                                        {verificationResult.decision.replace(/([A-Z])/g, ' $1').trim()}
+                                    </h2>
+                                    <div className="flex flex-wrap justify-center gap-4 mt-4">
+                                        <div className="px-4 py-2 rounded-full bg-black/30 border border-white/10 text-xs font-bold">
+                                            🔐 Blockchain: <span className={matchType !== 'none' ? 'text-green-400' : 'text-red-400'}>
+                                                {matchType.includes('merkle') ? 'MERKLE MATCH' : matchType.includes('direct') ? 'DIRECT MATCH' : 'NOT FOUND'}
+                                            </span>
+                                        </div>
+                                        <div className="px-4 py-2 rounded-full bg-black/30 border border-white/10 text-xs font-bold">
+                                            🧠 Confidence: <span className="text-cyan-400">{(verificationResult.extractionConfidence * 100).toFixed(0)}%</span>
+                                        </div>
+                                        <div className="px-4 py-2 rounded-full bg-black/30 border border-white/10 text-xs font-bold">
+                                            📄 Type: <span className="text-amber-400">{verificationResult.documentType}</span>
+                                        </div>
                                     </div>
-                                ) : (
-                                    <div className="space-y-6">
-                                        <div className="flex gap-6 p-6 rounded-[2rem] bg-green-500/5 border border-green-500/20">
-                                            <FileCheck className="h-8 w-8 text-green-500" />
-                                            <div>
-                                                <h4 className="text-xl font-bold text-green-500">Visual Integrity Passed</h4>
-                                                <p className="text-slate-400 text-xs mt-1">NO_SIGNS_OF_MANIPULATION</p>
+                                </div>
+                            );
+                        })()}
+
+                        <div className="grid lg:grid-cols-3 gap-8">
+                            {/* ═══ STEP 1: Blockchain Verification ═══ */}
+                            <div className={`p-6 rounded-[2rem] border ${matchType !== 'none' ? 'bg-green-500/5 border-green-500/20' : 'bg-red-500/5 border-red-500/20'}`}>
+                                <h4 className="text-[10px] font-black uppercase tracking-widest mb-4 opacity-70 text-cyan-400">Step 1: Cryptographic Match</h4>
+                                <div className="space-y-4">
+                                    <div className="flex items-center gap-3">
+                                        {matchType !== 'none' ? <CheckCircle className="h-6 w-6 text-green-400" /> : <AlertCircle className="h-6 w-6 text-red-400" />}
+                                        <span className={`font-bold text-sm ${matchType !== 'none' ? 'text-green-400' : 'text-red-400'}`}>
+                                            {matchType === 'strict_direct' ? 'Verified (Strict File Match)' :
+                                                matchType === 'easy_direct' ? 'Verified (AI Data Match)' :
+                                                    matchType === 'strict_merkle' ? 'Verified via Strict Merkle Proof' :
+                                                        matchType === 'easy_merkle' ? 'Verified via Fuzzy Merkle Proof' :
+                                                            'Hash Not Found On-Chain'}
+                                        </span>
+                                    </div>
+
+                                    {strictHash && (
+                                        <div className={`p-2 rounded-xl border transition-all ${matchType.includes('strict') ? 'bg-green-500/10 border-green-500/30' : 'bg-black/30 border-white/5'}`}>
+                                            <span className={`text-[8px] font-bold uppercase tracking-widest block mb-1 ${matchType.includes('strict') ? 'text-green-400' : 'text-slate-500'}`}>
+                                                Strict File Hash {matchType.includes('strict') ? '(MATCHED)' : ''}
+                                            </span>
+                                            <p className={`text-[8px] font-mono break-all ${matchType.includes('strict') ? 'text-green-300' : 'text-slate-600'}`}>
+                                                {strictHash}
+                                            </p>
+                                        </div>
+                                    )}
+
+                                    {easyHash && (
+                                        <div className={`p-2 rounded-xl border transition-all ${matchType.includes('easy') ? 'bg-cyan-500/10 border-cyan-500/30' : 'bg-black/30 border-white/5'}`}>
+                                            <span className={`text-[8px] font-bold uppercase tracking-widest block mb-1 ${matchType.includes('easy') ? 'text-cyan-400' : 'text-slate-500'}`}>
+                                                Easy Content Hash {matchType.includes('easy') ? '(MATCHED)' : ''}
+                                            </span>
+                                            <p className={`text-[8px] font-mono break-all ${matchType.includes('easy') ? 'text-cyan-300' : 'text-slate-600'}`}>
+                                                {easyHash}
+                                            </p>
+                                        </div>
+                                    )}
+
+                                    {merkleRoot && (
+                                        <div className="p-2 rounded-xl bg-purple-500/10 border border-purple-500/20 mt-4">
+                                            <span className="text-[8px] font-bold text-purple-400 uppercase tracking-widest block mb-1">Merkle Root (On-Chain)</span>
+                                            <p className="text-[8px] font-mono text-purple-300 break-all">{merkleRoot}</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* ═══ STEP 2: AI Advisory ═══ */}
+                            <div className="p-6 rounded-[2rem] border bg-cyan-500/5 border-cyan-500/20">
+                                <h4 className="text-[10px] font-black uppercase tracking-widest mb-4 opacity-70 text-purple-400">Step 2: AI Advisory</h4>
+                                {aiResult && (
+                                    <div className="space-y-4">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-xs font-bold text-slate-400">Confidence</span>
+                                            <span className="text-lg font-bold text-cyan-400">{(aiResult.extractionConfidence * 100).toFixed(0)}%</span>
+                                        </div>
+                                        <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden">
+                                            <div className="h-full bg-gradient-to-r from-cyan-500 to-purple-500 rounded-full" style={{ width: `${aiResult.extractionConfidence * 100}%` }} />
+                                        </div>
+                                        <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold ${aiResult.documentType === 'ORIGINAL' ? 'bg-green-500/10 text-green-400 border border-green-500/20' :
+                                            aiResult.documentType === 'PHOTOCOPY' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' :
+                                                'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                                            }`}>
+                                            {aiResult.documentType}
+                                        </div>
+                                        {aiResult.advisoryNotes.length > 0 && (
+                                            <div className="space-y-1 mt-2">
+                                                {aiResult.advisoryNotes.slice(0, 3).map((note, i) => (
+                                                    <p key={i} className="text-[9px] text-slate-500">💡 {note}</p>
+                                                ))}
                                             </div>
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-6">
-                                            <DataField label="Recipient" value={analysis?.recipientName} />
-                                            <DataField label="ID" value={analysis?.recipientId} isMono />
-                                            <DataField label="Schema" value={analysis?.documentType} className="col-span-2" isSpecial />
-                                        </div>
-                                        <Button onClick={() => setShowJson(!showJson)} variant="outline" className="w-full text-[10px] font-black tracking-widest uppercase rounded-full">
-                                            {showJson ? "Hide Data Matrix" : "View Data Matrix"}
-                                        </Button>
-                                        {showJson && <pre className="bg-black/40 p-4 rounded-xl text-[10px] text-cyan-500/80 overflow-auto">{analysisJson}</pre>}
+                                        )}
                                     </div>
                                 )}
                             </div>
 
-                            {/* Blockchain Verification */}
-                            <div className={`p-8 rounded-[2.5rem] border transition-all ${blockchainStatus === 'VALID' ? 'bg-purple-500/5 border-purple-500/30' : 'glassmorphism border-white/10'}`}>
-                                <div className="flex items-center gap-4 mb-8">
-                                    <Cpu className="h-6 w-6 text-purple-400" />
-                                    <h3 className="text-xl font-black tracking-widest uppercase">On-Chain_Sync</h3>
-                                </div>
-                                {blockchainStatus === 'IDLE' ? (
-                                    <div className="h-[300px] flex flex-col items-center justify-center space-y-8">
-                                        <p className="text-slate-500 text-sm text-center">Verify the extracted fingerprint against the immutable ledger.</p>
-                                        <Button onClick={handleVerifyOnChain} className="w-full h-16 rounded-2xl bg-cyber-gradient text-white font-bold text-lg shadow-xl shadow-purple-500/20">
-                                            Execute Verification
-                                        </Button>
-                                    </div>
-                                ) : step === 'verifying' ? (
-                                    <div className="h-[300px] flex flex-col items-center justify-center space-y-6">
-                                        <Loader2 className="h-12 w-12 text-purple-400 animate-spin" />
-                                        <span className="text-xs font-extrabold tracking-widest text-purple-400 uppercase animate-pulse">Querying_Polygon...</span>
-                                    </div>
-                                ) : (
-                                    <div className="space-y-6 text-center">
-                                        <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto border-2 ${blockchainStatus === 'VALID' ? 'border-green-500 text-green-500' : 'border-red-500 text-red-500'}`}>
-                                            {blockchainStatus === 'VALID' ? <CheckCircle className="h-10 w-10" /> : <AlertCircle className="h-10 w-10" />}
+                            {/* ═══ STEP 3: Policy Engine ═══ */}
+                            <div className="p-6 rounded-[2rem] border bg-amber-500/5 border-amber-500/20">
+                                <h4 className="text-[10px] font-black uppercase tracking-widest mb-4 opacity-70 text-amber-400">Step 3: Policy Compliance</h4>
+                                {verificationResult && (
+                                    <div className="space-y-3">
+                                        {verificationResult.reasons.map((reason, i) => (
+                                            <div key={i} className="flex items-start gap-2">
+                                                <span className="text-[10px] mt-0.5">
+                                                    {reason.includes('matches') || reason.includes('meets') || reason.includes('permitted') || reason.includes('acceptable')
+                                                        ? '✅' : reason.includes('below') || reason.includes('not allow') || reason.includes('requires')
+                                                            ? '⚠️' : '📋'}
+                                                </span>
+                                                <p className="text-[10px] text-slate-400 leading-relaxed">{reason}</p>
+                                            </div>
+                                        ))}
+                                        <div className="pt-3 border-t border-white/5">
+                                            <span className="text-[9px] text-slate-600 uppercase tracking-widest">Active Policy</span>
+                                            <div className="flex flex-wrap gap-1 mt-1">
+                                                <span className="text-[8px] px-2 py-0.5 rounded bg-white/5 text-slate-500">
+                                                    Photocopy: {policy.allowPhotocopy ? '✅' : '❌'}
+                                                </span>
+                                                <span className="text-[8px] px-2 py-0.5 rounded bg-white/5 text-slate-500">
+                                                    Min Conf: {(policy.minimumExtractionConfidence * 100)}%
+                                                </span>
+                                                <span className="text-[8px] px-2 py-0.5 rounded bg-white/5 text-slate-500">
+                                                    Strictness: {policy.strictnessLevel}
+                                                </span>
+                                            </div>
                                         </div>
-                                        <h4 className={`text-2xl font-bold uppercase ${blockchainStatus === 'VALID' ? 'text-green-500' : 'text-red-500'}`}>
-                                            {blockchainStatus === 'VALID' ? "Authenticated" : "Proof Failed"}
-                                        </h4>
-                                        <Button onClick={reset} variant="ghost" className="text-slate-500 uppercase text-[10px] font-black">Reset Protocol</Button>
                                     </div>
                                 )}
                             </div>
                         </div>
 
-                        {/* Truth Chain Visualization */}
-                        {analysis && (
-                            <div className="glassmorphism p-10 rounded-[3rem] border-white/5 overflow-hidden relative">
-                                <div className="absolute top-0 right-0 p-8 opacity-5"><ShieldCheck className="h-32 w-32" /></div>
-                                <div className="flex items-center gap-6 mb-12">
-                                    <div className="h-14 w-14 bg-cyan-500/10 rounded-2xl flex items-center justify-center border border-cyan-500/20">
-                                        <ShieldCheck className="h-8 w-8 text-cyan-400" />
-                                    </div>
-                                    <h3 className="text-2xl font-black tracking-tight uppercase italic">Trust_Chain_Verification</h3>
+                        {/* Extracted Data */}
+                        {aiResult && (
+                            <div className="glassmorphism p-8 rounded-[2.5rem] border-white/5">
+                                <div className="flex items-center gap-4 mb-6">
+                                    <ShieldCheck className="h-6 w-6 text-cyan-400" />
+                                    <h3 className="text-lg font-black tracking-widest uppercase">Extracted Data</h3>
                                 </div>
-
-                                <div className="grid md:grid-cols-3 gap-8 relative z-10">
-                                    <StepBox title="1. Metadata State" color="cyan">
-                                        <div className="space-y-3">
-                                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Name: <span className="text-white ml-2">{analysis.recipientName}</span></p>
-                                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">UID: <span className="text-white ml-2">{analysis.recipientId}</span></p>
+                                <div className="grid md:grid-cols-3 gap-6">
+                                    {Object.entries(aiResult.structuredData).map(([key, value]) => (
+                                        <div key={key} className="p-4 rounded-xl bg-white/[0.02] border border-white/5">
+                                            <span className="text-[9px] text-slate-500 uppercase tracking-widest font-bold block mb-1">{key}</span>
+                                            <span className="text-sm text-white font-medium">{String(value)}</span>
                                         </div>
-                                    </StepBox>
-                                    <StepBox title="2. Canonical JSON" color="purple">
-                                        <pre className="text-[9px] font-mono text-purple-300 break-all leading-tight">
-                                            {JSON.stringify(createCanonicalData(analysis.recipientName!, analysis.recipientId!, analysis.documentType!), null, 1)}
-                                        </pre>
-                                    </StepBox>
-                                    <StepBox title="3. Result Digest" color="green">
-                                        <p className="text-[8px] font-bold text-slate-500 uppercase tracking-widest mb-2">Keccak-256 Hash</p>
-                                        <p className="text-[9px] font-mono text-green-400 break-all leading-tight bg-green-500/5 p-2 rounded-lg border border-green-500/10">
-                                            {hashStudentData(createCanonicalData(analysis.recipientName!, analysis.recipientId!, analysis.documentType!))}
-                                        </p>
-                                    </StepBox>
+                                    ))}
                                 </div>
                             </div>
                         )}
+
+                        <div className="text-center">
+                            <Button onClick={reset} variant="ghost" className="text-slate-500 uppercase text-[10px] font-black tracking-widest">
+                                Reset &amp; Verify Another
+                            </Button>
+                        </div>
                     </div>
-                )}
-            </main>
+                )
+                }
+            </main >
 
             <footer className="py-12 border-t border-white/5 opacity-40">
                 <div className="container flex justify-between items-center whitespace-nowrap overflow-hidden">
-                    <span className="text-xs font-bold uppercase tracking-widest">AcadLedger Protocol v2.5.0</span>
-                    <span className="text-xs font-mono text-slate-500">Polygon Cardona zkEVM • Secure Audit Baseline</span>
+                    <span className="text-xs font-bold uppercase tracking-widest">Trustless Attestation Protocol v3.0</span>
+                    <span className="text-xs font-mono text-slate-500">Polygon Amoy • SHA-256 • Policy Engine</span>
                 </div>
             </footer>
-        </div>
-    );
-}
-
-function StepBox({ title, children, color }: { title: string, children: React.ReactNode, color: string }) {
-    const colors = {
-        cyan: "border-cyan-500/20 bg-cyan-500/5 text-cyan-400",
-        purple: "border-purple-500/20 bg-purple-500/5 text-purple-400",
-        green: "border-green-500/20 bg-green-500/5 text-green-400"
-    }[color as 'cyan' | 'purple' | 'green'];
-
-    return (
-        <div className={`p-6 rounded-[2rem] border ${colors}`}>
-            <h4 className="text-[10px] font-black uppercase tracking-widest mb-4 opacity-70">{title}</h4>
-            {children}
-        </div>
-    );
-}
-
-function DataField({ label, value, isMono = false, isSpecial = false, className = "" }: { label: string, value: string | undefined, isMono?: boolean, isSpecial?: boolean, className?: string }) {
-    return (
-        <div className={`space-y-1.5 ${className}`}>
-            <span className="text-[9px] text-slate-500 uppercase tracking-widest font-bold block">{label}</span>
-            <div className={`px-4 py-3 rounded-xl border border-white/5 bg-white/[0.02] ${isMono ? 'font-mono text-xs' : 'font-semibold text-sm'} ${isSpecial ? 'bg-gradient-to-r from-cyan-500/10 to-transparent text-cyan-400' : 'text-white'}`}>
-                {value || "-"}
-            </div>
-        </div>
+        </div >
     );
 }

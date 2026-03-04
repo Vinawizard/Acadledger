@@ -1,53 +1,74 @@
-import { ethers } from "ethers";
+import CryptoJS from "crypto-js";
 
-// Interface for the private student data that will be stored off-chain (e.g., Private Database or Encrypted IPFS)
+/**
+ * Creates a deterministic canonical data object from any document's extracted fields.
+ * - Sorts keys alphabetically
+ * - Trims whitespace
+ * - Normalizes strings (collapse multiple spaces, trim)
+ * 
+ * This is NOT student-specific — works for any credential type.
+ */
+export function createCanonicalData(data: Record<string, any>): Record<string, any> {
+    const canonical: Record<string, any> = {};
+
+    Object.keys(data).sort().forEach(key => {
+        let value = data[key];
+
+        if (typeof value === 'string') {
+            // Trim, collapse double spaces, normalize
+            value = value.trim().replace(/\s+/g, ' ');
+        }
+
+        // Skip null/undefined values for determinism
+        if (value !== null && value !== undefined && value !== '') {
+            canonical[key] = value;
+        }
+    });
+
+    return canonical;
+}
+
+/**
+ * Hashes a canonical data object using SHA-256.
+ * Returns a hex string prefixed with '0x'.
+ */
+export function hashDocumentData(data: Record<string, any>): string {
+    const canonical = createCanonicalData(data);
+    const jsonString = JSON.stringify(canonical);
+    const hash = CryptoJS.SHA256(jsonString).toString(CryptoJS.enc.Hex);
+    return '0x' + hash;
+}
+
+/**
+ * Verifies if a given data object matches a target hash.
+ */
+export function verifyDocumentData(data: Record<string, any>, targetHash: string): boolean {
+    const calculated = hashDocumentData(data);
+    return calculated.toLowerCase() === targetHash.toLowerCase();
+}
+
+/**
+ * Calculates the exact SHA-256 hash of a file's raw bytes.
+ * This is used for "Strict Mode" (Cryptographic Byte Match).
+ * Bypasses AI completely for 100% deterministic mathematical verification.
+ */
+export async function hashFileBytes(file: File): Promise<string> {
+    const arrayBuffer = await file.arrayBuffer();
+    // Use native Web Crypto API for fast, browser-native hashing of binary data
+    const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    // Convert bytes to hex string
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    return '0x' + hashHex;
+}
+
+// Legacy compatibility exports (used by existing verifier page)
 export interface PrivateStudentData {
     recipientName: string;
     recipientId: string;
     documentType: string;
 }
 
-/**
- * Creates a standardized data object to ensure hash consistency.
- */
-export function createCanonicalData(
-    name: string,
-    id: string,
-    type: string
-): PrivateStudentData {
-    return {
-        recipientName: name.trim(),
-        recipientId: id.trim().toUpperCase().replace(/[^A-Z0-9]/g, ''),
-        documentType: type.trim().toUpperCase().replace(/[^A-Z0-9]/g, ''),
-    };
-}
-
-/**
- * Hashes the private student data to create a unique "State Root" or "Fingerprint".
- * This hash is what gets stored on the Polygon zkEVM blockchain.
- * 
- * @param data The private student data object
- * @returns The Keccak256 hash of the JSON string
- */
 export function hashStudentData(data: PrivateStudentData): string {
-    // 1. Sort keys to ensure consistent JSON stringification
-    const sortedData = JSON.stringify(data, Object.keys(data).sort());
-
-    // 2. Create a Keccak256 hash of the stringified data
-    // This ensures that even a single character change in the data will result in a completely different hash.
-    const hash = ethers.keccak256(ethers.toUtf8Bytes(sortedData));
-
-    return hash;
-}
-
-/**
- * Verifies if a given data object matches the on-chain hash.
- * 
- * @param data The private student data provided by the user/verifier
- * @param onChainHash The hash retrieved from the Smart Contract
- * @returns True if the data is authentic and hasn't been tampered with
- */
-export function verifyStudentData(data: PrivateStudentData, onChainHash: string): boolean {
-    const calculatedHash = hashStudentData(data);
-    return calculatedHash === onChainHash;
+    return hashDocumentData(data);
 }

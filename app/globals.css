@@ -49,14 +49,78 @@
   }
 }
 
+/* ═══ THEME SYSTEM: Dark / Light / Grey ═══ */
+[data-theme="dark"],
+:root {
+  --page-bg: #020617;
+  --nav-bg: rgba(0, 0, 0, 0.3);
+  --card-bg: rgba(255, 255, 255, 0.03);
+  --card-solid: #0f172a;
+  --hover-bg: rgba(255, 255, 255, 0.05);
+  --border: rgba(255, 255, 255, 0.08);
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted: #475569;
+  --accent: #a855f7;
+  --accent-bg: rgba(168, 85, 247, 0.1);
+  --accent-border: rgba(168, 85, 247, 0.2);
+  --accent-2: #22d3ee;
+  --glow-1: rgba(168, 85, 247, 0.08);
+  --glow-2: rgba(34, 211, 238, 0.08);
+  --table-header: rgba(255, 255, 255, 0.02);
+  --table-row-hover: rgba(255, 255, 255, 0.02);
+}
+
+[data-theme="light"] {
+  --page-bg: #f8fafc;
+  --nav-bg: rgba(255, 255, 255, 0.85);
+  --card-bg: #ffffff;
+  --card-solid: #ffffff;
+  --hover-bg: rgba(0, 0, 0, 0.03);
+  --border: rgba(0, 0, 0, 0.08);
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+  --accent: #7c3aed;
+  --accent-bg: rgba(124, 58, 237, 0.08);
+  --accent-border: rgba(124, 58, 237, 0.15);
+  --accent-2: #0891b2;
+  --glow-1: rgba(124, 58, 237, 0.06);
+  --glow-2: rgba(8, 145, 178, 0.06);
+  --table-header: rgba(0, 0, 0, 0.02);
+  --table-row-hover: rgba(0, 0, 0, 0.02);
+}
+
+[data-theme="grey"] {
+  --page-bg: #1a1a2e;
+  --nav-bg: rgba(26, 26, 46, 0.9);
+  --card-bg: rgba(255, 255, 255, 0.04);
+  --card-solid: #22223b;
+  --hover-bg: rgba(255, 255, 255, 0.06);
+  --border: rgba(255, 255, 255, 0.1);
+  --text-primary: #e2e8f0;
+  --text-secondary: #a0aec0;
+  --text-muted: #718096;
+  --accent: #b794f4;
+  --accent-bg: rgba(183, 148, 244, 0.1);
+  --accent-border: rgba(183, 148, 244, 0.2);
+  --accent-2: #63b3ed;
+  --glow-1: rgba(183, 148, 244, 0.06);
+  --glow-2: rgba(99, 179, 237, 0.06);
+  --table-header: rgba(255, 255, 255, 0.03);
+  --table-row-hover: rgba(255, 255, 255, 0.03);
+}
+
 @layer base {
   * {
     @apply border-border;
   }
 
   body {
-    @apply bg-background text-foreground;
+    background-color: var(--page-bg);
+    color: var(--text-primary);
     font-feature-settings: "rlig" 1, "calt" 1;
+    transition: background-color 0.3s ease, color 0.3s ease;
   }
 }
 
@@ -78,7 +142,9 @@
   }
 
   .glassmorphism {
-    @apply bg-white/5 backdrop-blur-md border border-white/10;
+    background: var(--card-bg);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border);
   }
 
   .perspective-1000 {
@@ -182,4 +248,420 @@
 
 .animate-shake {
   animation: shake 0.5s ease-in-out;
+}
+
+/* ═══════════════════════════════════════════════════════
+   LIGHT THEME — Override ALL hardcoded dark-mode classes
+   ═══════════════════════════════════════════════════════ */
+[data-theme="light"] {
+
+  /* ── TEXT: white/slate → dark ── */
+  .text-white {
+    color: #0f172a !important;
+  }
+
+  .text-white\/90 {
+    color: #1e293b !important;
+  }
+
+  .text-white\/80 {
+    color: #334155 !important;
+  }
+
+  .text-white\/60 {
+    color: #475569 !important;
+  }
+
+  .text-white\/40 {
+    color: #64748b !important;
+  }
+
+  .text-white\/20 {
+    color: #94a3b8 !important;
+  }
+
+  .text-slate-50 {
+    color: #1e293b !important;
+  }
+
+  .text-slate-100 {
+    color: #1e293b !important;
+  }
+
+  .text-slate-200 {
+    color: #334155 !important;
+  }
+
+  .text-slate-300 {
+    color: #475569 !important;
+  }
+
+  .text-slate-400 {
+    color: #64748b !important;
+  }
+
+  .text-slate-500 {
+    color: #64748b !important;
+  }
+
+  .text-slate-600 {
+    color: #475569 !important;
+  }
+
+  .text-slate-700 {
+    color: #334155 !important;
+  }
+
+  /* white with opacity fractions */
+  [class*="text-white\\/"] {
+    color: #1e293b !important;
+  }
+
+  /* ── ACCENT TEXT: deeper for contrast ── */
+  .text-cyan-400 {
+    color: #0891b2 !important;
+  }
+
+  .text-cyan-400\/80 {
+    color: #0891b2 !important;
+  }
+
+  .text-cyan-400\/60 {
+    color: #0e7490 !important;
+  }
+
+  .text-cyan-300 {
+    color: #0891b2 !important;
+  }
+
+  .text-cyan-300\/90 {
+    color: #0891b2 !important;
+  }
+
+  .text-purple-400 {
+    color: #7c3aed !important;
+  }
+
+  .text-purple-400\/60 {
+    color: #7c3aed !important;
+  }
+
+  .text-purple-300 {
+    color: #7c3aed !important;
+  }
+
+  .text-amber-400 {
+    color: #d97706 !important;
+  }
+
+  .text-green-400 {
+    color: #16a34a !important;
+  }
+
+  .text-green-500\/80 {
+    color: #16a34a !important;
+  }
+
+  .text-red-400 {
+    color: #dc2626 !important;
+  }
+
+  /* accent with opacity fractions */
+  [class*="text-cyan-400\\/"] {
+    color: #0891b2 !important;
+  }
+
+  [class*="text-cyan-300\\/"] {
+    color: #0891b2 !important;
+  }
+
+  [class*="text-purple-400\\/"] {
+    color: #7c3aed !important;
+  }
+
+  [class*="text-green-500\\/"] {
+    color: #16a34a !important;
+  }
+
+  [class*="text-slate-300\\/"] {
+    color: #475569 !important;
+  }
+
+  [class*="text-slate-400\\/"] {
+    color: #64748b !important;
+  }
+
+  [class*="text-slate-500\\/"] {
+    color: #64748b !important;
+  }
+
+  [class*="text-slate-600\\/"] {
+    color: #475569 !important;
+  }
+
+  /* ── BACKGROUNDS: flip to light-mode safe ── */
+  .bg-white\/5 {
+    background-color: rgba(0, 0, 0, 0.03) !important;
+  }
+
+  .bg-white\/10 {
+    background-color: rgba(0, 0, 0, 0.05) !important;
+  }
+
+  [class*="bg-white\\/\\[0"] {
+    background-color: rgba(0, 0, 0, 0.02) !important;
+  }
+
+  .bg-black\/10 {
+    background-color: rgba(0, 0, 0, 0.02) !important;
+  }
+
+  .bg-black\/20 {
+    background-color: rgba(0, 0, 0, 0.03) !important;
+  }
+
+  .bg-black\/30 {
+    background-color: rgba(0, 0, 0, 0.04) !important;
+  }
+
+  .bg-black\/40 {
+    background-color: rgba(0, 0, 0, 0.04) !important;
+  }
+
+  .bg-black\/60 {
+    background-color: rgba(0, 0, 0, 0.04) !important;
+  }
+
+  .bg-black\/80 {
+    background-color: rgba(0, 0, 0, 0.05) !important;
+  }
+
+  /* Hardcoded dark background hex values */
+  .bg-\[\#020617\] {
+    background-color: #f1f5f9 !important;
+  }
+
+  .bg-\[\#0f172a\] {
+    background-color: #e2e8f0 !important;
+  }
+
+  /* ── BORDERS ── */
+  .border-white\/5 {
+    border-color: rgba(0, 0, 0, 0.06) !important;
+  }
+
+  .border-white\/10 {
+    border-color: rgba(0, 0, 0, 0.08) !important;
+  }
+
+  .border-white\/20 {
+    border-color: rgba(0, 0, 0, 0.12) !important;
+  }
+
+  [class*="border-white\\/\\[0"] {
+    border-color: rgba(0, 0, 0, 0.06) !important;
+  }
+
+  .border-slate-700 {
+    border-color: rgba(0, 0, 0, 0.1) !important;
+  }
+
+  .border-slate-600 {
+    border-color: rgba(0, 0, 0, 0.08) !important;
+  }
+
+  /* ── GRADIENT TEXT → solid ── */
+  .bg-clip-text.text-transparent {
+    -webkit-text-fill-color: initial;
+    background: none !important;
+    color: #1e293b !important;
+  }
+
+  /* ── CARD / STATUS BACKGROUNDS ── */
+  .bg-green-500\/5 {
+    background-color: rgba(34, 197, 94, 0.08) !important;
+  }
+
+  .bg-green-500\/10 {
+    background-color: rgba(34, 197, 94, 0.1) !important;
+  }
+
+  .bg-red-500\/5 {
+    background-color: rgba(239, 68, 68, 0.08) !important;
+  }
+
+  .bg-red-500\/10 {
+    background-color: rgba(239, 68, 68, 0.1) !important;
+  }
+
+  .bg-cyan-500\/5 {
+    background-color: rgba(6, 182, 212, 0.08) !important;
+  }
+
+  .bg-purple-500\/5 {
+    background-color: rgba(168, 85, 247, 0.08) !important;
+  }
+
+  .bg-purple-500\/10 {
+    background-color: rgba(168, 85, 247, 0.1) !important;
+  }
+
+  .bg-amber-500\/10 {
+    background-color: rgba(245, 158, 11, 0.1) !important;
+  }
+
+  .bg-blue-500\/10 {
+    background-color: rgba(59, 130, 246, 0.1) !important;
+  }
+
+  [class*="bg-purple-600\\/"] {
+    background-color: rgba(168, 85, 247, 0.06) !important;
+  }
+
+  [class*="bg-cyan-600\\/"] {
+    background-color: rgba(6, 182, 212, 0.06) !important;
+  }
+
+  [class*="bg-blue-600\\/"] {
+    background-color: rgba(59, 130, 246, 0.04) !important;
+  }
+
+  [class*="bg-cyan-500\\/\\[0"] {
+    background-color: rgba(6, 182, 212, 0.06) !important;
+  }
+
+  [class*="bg-purple-500\\/\\[0"] {
+    background-color: rgba(168, 85, 247, 0.06) !important;
+  }
+
+  /* ── DIVIDERS ── */
+  .divide-white\/5>*+* {
+    border-color: rgba(0, 0, 0, 0.06) !important;
+  }
+
+  .bg-gradient-to-t {
+    background-image: none !important;
+  }
+
+  /* ── GLASSMORPHISM in light mode ── */
+  .glassmorphism {
+    background: rgba(255, 255, 255, 0.6) !important;
+    border-color: rgba(0, 0, 0, 0.06) !important;
+  }
+
+  /* ── INPUTS ── */
+  input,
+  textarea,
+  select {
+    color: #1e293b !important;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: #94a3b8 !important;
+  }
+
+  /* ── CODE BLOCKS ── */
+  pre,
+  code {
+    color: #1e293b !important;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════
+   GREY THEME — Override for grey-toned backgrounds
+   ═══════════════════════════════════════════════════════ */
+[data-theme="grey"] {
+
+  /* ── TEXT ── */
+  .text-white {
+    color: #e2e8f0 !important;
+  }
+
+  .text-slate-50 {
+    color: #e2e8f0 !important;
+  }
+
+  .text-slate-400 {
+    color: #a0aec0 !important;
+  }
+
+  .text-slate-500 {
+    color: #718096 !important;
+  }
+
+  .text-slate-600 {
+    color: #a0aec0 !important;
+  }
+
+  [class*="text-white\\/"] {
+    color: #e2e8f0 !important;
+  }
+
+  /* ── ACCENT ── */
+  .text-cyan-400 {
+    color: #63b3ed !important;
+  }
+
+  .text-purple-400 {
+    color: #b794f4 !important;
+  }
+
+  [class*="text-cyan-400\\/"] {
+    color: #63b3ed !important;
+  }
+
+  [class*="text-cyan-300\\/"] {
+    color: #63b3ed !important;
+  }
+
+  /* ── BACKGROUNDS ── */
+  .bg-white\/5 {
+    background-color: rgba(255, 255, 255, 0.05) !important;
+  }
+
+  .bg-black\/30 {
+    background-color: rgba(0, 0, 0, 0.25) !important;
+  }
+
+  .bg-black\/40 {
+    background-color: rgba(0, 0, 0, 0.3) !important;
+  }
+
+  .bg-black\/60 {
+    background-color: rgba(0, 0, 0, 0.35) !important;
+  }
+
+  .bg-black\/80 {
+    background-color: rgba(0, 0, 0, 0.4) !important;
+  }
+
+  .bg-\[\#020617\] {
+    background-color: #16213e !important;
+  }
+
+  /* ── BORDERS ── */
+  .border-white\/5 {
+    border-color: rgba(255, 255, 255, 0.08) !important;
+  }
+
+  .border-white\/10 {
+    border-color: rgba(255, 255, 255, 0.12) !important;
+  }
+
+  .border-slate-700 {
+    border-color: rgba(255, 255, 255, 0.08) !important;
+  }
+
+  /* ── INPUTS ── */
+  input,
+  textarea,
+  select {
+    color: #e2e8f0 !important;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: #718096 !important;
+  }
 }

@@ -1,15 +1,16 @@
+require("@nomicfoundation/hardhat-ethers");
+require("dotenv").config();
 
-require("@nomiclabs/hardhat-ethers");
+const PRIVATE_KEY = process.env.PRIVATE_KEY || "0x0000000000000000000000000000000000000000000000000000000000000001";
 
-const privateKey = "0xa83a32d87412087d7e4c9dabd35557ae1d6d9cd6cbbf79d4a1c81b5b1bbaff45"; // Node 1 Private Key
-
+/** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
-    solidity: "0.8.0",
+    solidity: "0.8.20",
     networks: {
-        custom: {
-            url: "http://127.0.0.1:8549",
-            chainId: 211343,
-            accounts: [privateKey]
-        }
-    }
+        amoy: {
+            url: "https://rpc-amoy.polygon.technology/",
+            chainId: 80002,
+            accounts: [PRIVATE_KEY],
+        },
+    },
 };

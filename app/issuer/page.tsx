@@ -2,69 +2,35 @@
 import Link from "next/link";
 import { useState, ChangeEvent } from "react";
 import { Button } from "@/components/ui/button";
-import { Shield, Upload, Brain, Cpu, CheckCircle, AlertCircle, Loader2, ExternalLink, Hash, Sparkles } from "lucide-react";
+import { Shield, Upload, Brain, Cpu, CheckCircle, AlertCircle, Loader2, ExternalLink, Hash, Sparkles, Settings, Layers } from "lucide-react";
 import axios from "axios";
 import { useWeb3Modal } from "@web3modal/wagmi/react";
 import { useAccount } from 'wagmi'
-import { hashStudentData, createCanonicalData } from "@/lib/privacy-utils";
+import { createCanonicalData, hashDocumentData, hashFileBytes } from "@/lib/privacy-utils";
 import { attestOnChain } from "@/lib/blockchain";
-import { parseDocumentWithAI, ExtractedDocumentData } from "@/lib/ai-utils";
+import { parseDocumentWithAI, toLegacyFormat } from "@/lib/ai-utils";
+import { VerificationPolicy, DEFAULT_POLICY, AIExtractionResult } from "@/lib/types";
+import { createMerkleTree, getMerkleRoot, generateMerkleProof } from "@/lib/merkle-utils";
+import Navbar from "@/components/navbar";
+import { useEffect } from "react";
 
 type WorkflowStep = 'idle' | 'uploading' | 'extracting' | 'extracted' | 'hashing' | 'attesting' | 'complete' | 'error';
+type IssuanceMode = 'single' | 'bulk';
+type AnchorMode = 'strict' | 'easy';
 
 export default function IssuerPage() {
     const { open } = useWeb3Modal();
     const { address } = useAccount();
 
     return (
-        <div className="flex flex-col min-h-screen bg-[#020617] text-slate-50">
-            {/* Background Decorative Elements */}
+        <div className="flex flex-col min-h-screen" style={{ backgroundColor: 'var(--page-bg)', color: 'var(--text-primary)' }}>
             <div className="fixed inset-0 overflow-hidden pointer-events-none">
-                <div className="absolute top-[20%] right-[10%] w-[30%] h-[30%] bg-purple-600/5 blur-[100px] rounded-full" />
-                <div className="absolute bottom-[20%] left-[10%] w-[30%] h-[30%] bg-blue-600/5 blur-[100px] rounded-full" />
+                <div className="absolute top-[20%] right-[10%] w-[30%] h-[30%] blur-[100px] rounded-full" style={{ background: 'var(--glow-1)' }} />
+                <div className="absolute bottom-[20%] left-[10%] w-[30%] h-[30%] blur-[100px] rounded-full" style={{ background: 'var(--glow-2)' }} />
             </div>
 
-            <header className="sticky top-0 z-50 bg-black/20 backdrop-blur-2xl transition-all duration-300">
-                <div className="absolute inset-x-0 bottom-0 h-[1px] bg-gradient-to-r from-transparent via-white/10 to-transparent" />
-                <div className="container flex h-16 items-center justify-between">
-                    <Link href="/" className="flex items-center gap-3 group">
-                        <div className="relative overflow-hidden h-10 w-10 p-1 rounded-full bg-white/5 flex items-center justify-center border border-white/10 group-hover:scale-110 transition-all duration-500 shadow-2xl group-hover:shadow-cyan-500/10">
-                            <img src="/New Project 100 [31F474F].png" alt="AcadLedger Logo" className="w-full h-full object-cover" />
-                            <div className="absolute inset-0 bg-gradient-to-tr from-cyan-500/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                        </div>
-                        <div className="flex flex-col">
-                            <span className="text-xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white via-white to-white/40 group-hover:to-white transition-all duration-500">
-                                AcadLedger
-                            </span>
-                            <span className="text-[8px] font-sans text-cyan-400 leading-none tracking-[0.2em] font-medium uppercase opacity-60">Global Protocol</span>
-                        </div>
-                    </Link>
+            <Navbar />
 
-                    <nav className="hidden md:flex items-center gap-8">
-                        <Link href="/explorer" className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 hover:text-cyan-400 transition-colors">Explorer</Link>
-                        <Link href="/verifier" className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 hover:text-cyan-400 transition-colors">Verify</Link>
-                        <Link href="/dashboard" className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 hover:text-cyan-400 transition-colors">Dashboard</Link>
-                    </nav>
-
-                    <div className="flex items-center gap-6">
-                        <Button
-                            onClick={() => open()}
-                            variant="outline"
-                            className="relative overflow-hidden border-white/5 bg-white/5 hover:bg-white/10 hover:border-white/20 rounded-2xl h-11 px-6 group transition-all duration-500"
-                        >
-                            <div className="absolute inset-0 bg-gradient-to-r from-purple-500/10 to-cyan-500/10 opacity-0 group-hover:opacity-100 transition-opacity" />
-                            {address ? (
-                                <div className="flex items-center gap-3 relative z-10">
-                                    <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_12px_rgba(34,197,94,0.8)] animate-pulse" />
-                                    <span className="font-sans text-xs font-bold tracking-wider">{address.slice(0, 6)}...{address.slice(-4)}</span>
-                                </div>
-                            ) : (
-                                <span className="relative z-10 font-bold tracking-wide">Connect Authority</span>
-                            )}
-                        </Button>
-                    </div>
-                </div>
-            </header>
 
             <main className="flex-1 relative z-10 container py-12 max-w-6xl">
                 <div className="text-center mb-12 animate-in fade-in slide-in-from-top-4 duration-500">
@@ -72,8 +38,8 @@ export default function IssuerPage() {
                         Institutional Attestation
                     </h1>
                     <p className="text-slate-400 max-w-2xl mx-auto text-lg font-light leading-relaxed">
-                        Securely anchor academic credentials to the blockchain.
-                        AI analyzes document integrity while the protocol generates irreversible cryptographic proofs.
+                        Securely anchor credentials to the blockchain.
+                        AI extracts structured data while the protocol generates SHA-256 cryptographic proofs.
                     </p>
                 </div>
 
@@ -96,17 +62,118 @@ export default function IssuerPage() {
     );
 }
 
+// ─── Policy Controls Component ───
+type PolicyPreset = 'EASY' | 'STRICT';
+
+const POLICY_PRESETS: Record<PolicyPreset, { policy: VerificationPolicy; label: string; desc: string; color: string }> = {
+    EASY: {
+        label: "Easy",
+        desc: "Photocopies & digital reproductions accepted. Low confidence threshold. Good for general credentials like training certs, event badges.",
+        color: "green",
+        policy: {
+            allowPhotocopy: true,
+            allowDigitalReproduction: true,
+            requireOriginal: false,
+            minimumExtractionConfidence: 0.5,
+            strictnessLevel: 'LOW',
+        }
+    },
+    STRICT: {
+        label: "Strict",
+        desc: "Only the original issued document is accepted. High confidence required. Use for sensitive credentials like degrees, legal docs, financial records.",
+        color: "red",
+        policy: {
+            allowPhotocopy: false,
+            allowDigitalReproduction: false,
+            requireOriginal: true,
+            minimumExtractionConfidence: 0.85,
+            strictnessLevel: 'HIGH',
+        }
+    }
+};
+
+function PolicyControls({ policy, setPolicy }: { policy: VerificationPolicy; setPolicy: (p: VerificationPolicy) => void }) {
+    const activePreset: PolicyPreset = policy.requireOriginal ? 'STRICT' : 'EASY';
+
+    return (
+        <div className="glassmorphism p-6 rounded-[2rem] border border-white/10 space-y-5">
+            <div className="flex items-center gap-3 mb-2">
+                <div className="h-8 w-8 bg-amber-500/10 rounded-lg flex items-center justify-center border border-amber-500/20">
+                    <Settings className="h-4 w-4 text-amber-400" />
+                </div>
+                <h4 className="text-sm font-black uppercase tracking-widest text-white/90">Verification Policy</h4>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+                {(Object.entries(POLICY_PRESETS) as [PolicyPreset, typeof POLICY_PRESETS[PolicyPreset]][]).map(([key, preset]) => (
+                    <button
+                        key={key}
+                        onClick={() => setPolicy(preset.policy)}
+                        className={`p-5 rounded-2xl border-2 text-left transition-all duration-300 ${activePreset === key
+                            ? key === 'EASY'
+                                ? 'bg-green-500/10 border-green-500/40 shadow-lg shadow-green-500/10'
+                                : 'bg-red-500/10 border-red-500/40 shadow-lg shadow-red-500/10'
+                            : 'bg-white/[0.02] border-white/10 hover:border-white/20'
+                            }`}
+                    >
+                        <div className="flex items-center gap-3 mb-3">
+                            <div className={`h-3 w-3 rounded-full ${activePreset === key ? (key === 'EASY' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]') : 'bg-white/20'}`} />
+                            <span className={`text-sm font-black uppercase tracking-widest ${activePreset === key ? 'text-white' : 'text-slate-500'}`}>
+                                {preset.label}
+                            </span>
+                        </div>
+                        <p className={`text-[11px] leading-relaxed ${activePreset === key ? 'text-slate-300' : 'text-slate-600'}`}>
+                            {preset.desc}
+                        </p>
+                        {activePreset === key && (
+                            <div className="flex flex-wrap gap-1.5 mt-3">
+                                <span className="text-[9px] px-2 py-0.5 rounded-full bg-white/10 text-slate-400 font-bold">
+                                    {policy.allowPhotocopy ? '📋 Copies OK' : '📋 No Copies'}
+                                </span>
+                                <span className="text-[9px] px-2 py-0.5 rounded-full bg-white/10 text-slate-400 font-bold">
+                                    {policy.requireOriginal ? '🔒 Original Only' : '🔓 Flexible'}
+                                </span>
+                                <span className="text-[9px] px-2 py-0.5 rounded-full bg-white/10 text-slate-400 font-bold">
+                                    Min {(policy.minimumExtractionConfidence * 100).toFixed(0)}%
+                                </span>
+                            </div>
+                        )}
+                    </button>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+// ─── Main Workflow ───
 function DemoWorkflow({ address }: { address: string }) {
     const [step, setStep] = useState<WorkflowStep>('idle');
+    const [mode, setMode] = useState<IssuanceMode>('single');
+    const [anchorMode, setAnchorMode] = useState<AnchorMode>('strict');
+    const [policy, setPolicy] = useState<VerificationPolicy>(DEFAULT_POLICY);
     const [uploadedPreview, setUploadedPreview] = useState<string | null>(null);
     const [fileType, setFileType] = useState<string | null>(null);
-    const [extractedData, setExtractedData] = useState<ExtractedDocumentData | null>(null);
+    const [aiResult, setAiResult] = useState<AIExtractionResult | null>(null);
     const [documentHash, setDocumentHash] = useState<string | null>(null);
+    const [computedFileHash, setComputedFileHash] = useState<string | null>(null);
+    const [computedDataHash, setComputedDataHash] = useState<string | null>(null);
     const [txHash, setTxHash] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [fileName, setFileName] = useState<string | null>(null);
     const [showJson, setShowJson] = useState(false);
     const [jsonContent, setJsonContent] = useState<string | null>(null);
+
+    // Bulk mode state
+    const [bulkFiles, setBulkFiles] = useState<File[]>([]);
+    const [bulkHashes, setBulkHashes] = useState<string[]>([]);
+    const [merkleRoot, setMerkleRoot] = useState<string | null>(null);
+
+    // Sync active document hash when anchor mode changes
+    useEffect(() => {
+        if (mode === 'single' && computedFileHash && computedDataHash) {
+            setDocumentHash(anchorMode === 'strict' ? computedFileHash : computedDataHash);
+        }
+    }, [anchorMode, computedFileHash, computedDataHash, mode]);
 
     const handleFileUpload = async (e: ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -114,8 +181,10 @@ function DemoWorkflow({ address }: { address: string }) {
 
         setStep('uploading');
         setError(null);
-        setExtractedData(null);
+        setAiResult(null);
         setDocumentHash(null);
+        setComputedFileHash(null);
+        setComputedDataHash(null);
         setTxHash(null);
         setFileName(file.name);
         setFileType(file.type);
@@ -126,96 +195,129 @@ function DemoWorkflow({ address }: { address: string }) {
 
         setStep('extracting');
         try {
-            // Step 1: Use local AI for immediate metadata extraction
-            // This ensures we get data even if the external hash service is down
-            const localData = await parseDocumentWithAI(file);
+            // Read file bytes out of band for Strict crypto hash
+            const fileHash = await hashFileBytes(file);
+            setComputedFileHash(fileHash);
 
-            // Step 2: Attempt to get canonical hash from external backend
-            // NEW: Always generate a Content-Fingerprint from Metadata for cross-format consistency
-            const canonical = createCanonicalData(
-                localData.recipientName || "UNKNOWN",
-                localData.recipientId || "SIT-PENDING",
-                localData.documentType || "CERTIFICATE"
-            );
-            const metadataHash = hashStudentData(canonical);
+            const result = await parseDocumentWithAI(file);
+            setAiResult(result);
 
-            // We use the metadata-derived hash as the primary 'finalHash' to ensure 
-            // the same document in different formats (PDF/JPG) yields the same ID.
-            let finalHash = metadataHash;
+            // Create canonical data and hash using SHA-256 for Easy AI hash
+            const canonical = createCanonicalData(result.structuredData);
+            const dataHash = hashDocumentData(canonical);
+            setComputedDataHash(dataHash);
 
-            try {
-                const formData = new FormData();
-                formData.append("pdf", file);
-                const response = await axios.post("https://ledger.palatepals.com/add_legit", formData, {
-                    headers: { "Content-Type": "multipart/form-data" },
-                    timeout: 4000
-                });
-                // Optional: Store the file-level hash as a secondary proof if needed
-                console.log("Backend file-hash captured:", response.data.hash);
-            } catch (err) {
-                console.warn("Backend sync bypassed; relying on high-integrity local fingerprint.");
-            }
+            // Set the main document hash to whatever mode is currently active
+            const activeHash = anchorMode === 'strict' ? fileHash : dataHash;
+            setDocumentHash(activeHash);
 
-            setDocumentHash(finalHash);
-            const enrichedData = {
-                ...localData,
-                recipientId: localData.recipientId || "SIT-" + finalHash.slice(2, 8).toUpperCase()
-            };
-            setExtractedData(enrichedData);
-
-            // Generate JSON content for display and session
+            // Store policy alongside the extraction for the verifier to reference
             const exportData = {
-                protocol: "AcadLedger_V2",
+                protocol: "TAP_V3",
                 institution: "Verified Institution",
-                documentInfo: {
-                    name: file.name,
-                    type: file.type,
-                    size: file.size,
-                    hash: finalHash
-                },
-                extractedMetadata: enrichedData,
-                attestation: {
-                    status: "PENDING_ANCHOR",
-                    timestamp: new Date().toISOString()
-                }
+                documentInfo: { name: file.name, type: file.type, size: file.size, hash: activeHash, anchorMode },
+                extraction: result,
+                policy,
+                attestation: { status: "PENDING_ANCHOR", timestamp: new Date().toISOString() }
             };
             const jsonStr = JSON.stringify(exportData, null, 2);
             setJsonContent(jsonStr);
-            sessionStorage.setItem('acadledger_verify_data', jsonStr);
+            sessionStorage.setItem('tap_verify_data', jsonStr);
 
             setStep('extracted');
         } catch (err: any) {
-            console.error("Extraction process failed:", err);
-            setError(err.message || "Protocol extraction failed. Please ensure file is valid.");
+            console.error("Extraction failed:", err);
+            setError(err.message || "Protocol extraction failed.");
+            setStep('error');
+        }
+    };
+
+    const handleBulkUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+        const files = e.target.files;
+        if (!files || files.length === 0) return;
+
+        setStep('extracting');
+        setError(null);
+        const fileArray = Array.from(files);
+        setBulkFiles(fileArray);
+
+        try {
+            const hashes: string[] = [];
+            for (const file of fileArray) {
+                if (anchorMode === 'strict') {
+                    hashes.push(await hashFileBytes(file));
+                } else {
+                    const result = await parseDocumentWithAI(file);
+                    const canonical = createCanonicalData(result.structuredData);
+                    hashes.push(hashDocumentData(canonical));
+                }
+            }
+            setBulkHashes(hashes);
+
+            // Generate Merkle Root + proofs for each leaf
+            const tree = createMerkleTree(hashes);
+            const root = getMerkleRoot(tree);
+            setMerkleRoot(root);
+            setDocumentHash(root);
+
+            // Generate a Merkle proof for each leaf so individual docs can be verified
+            const proofs = hashes.map(h => ({
+                leafHash: h,
+                proof: generateMerkleProof(tree, h)
+            }));
+
+            const exportData = {
+                protocol: "TAP_V3_Batch",
+                institution: "Verified Institution",
+                anchorMode,
+                merkleRoot: root,
+                leafHashes: hashes,
+                merkleProofs: proofs,
+                fileCount: fileArray.length,
+                policy,
+                attestation: { status: "PENDING_ANCHOR", timestamp: new Date().toISOString() }
+            };
+            setJsonContent(JSON.stringify(exportData, null, 2));
+
+            // Save Merkle data to sessionStorage so the verifier can use it
+            sessionStorage.setItem('tap_merkle_data', JSON.stringify({
+                merkleRoot: root,
+                proofs
+            }));
+
+            setStep('extracted');
+        } catch (err: any) {
+            setError(err.message || "Bulk extraction failed.");
             setStep('error');
         }
     };
 
     const handleAttest = async () => {
-        if (!extractedData || !documentHash) return;
-
+        if (!documentHash) return;
         setStep('hashing');
         setError(null);
 
         try {
-            // Step 3: Register Metadata on IPFS
-            const regResponse = await axios.post("/api/register", {
-                recipientName: extractedData.recipientName,
-                recipientEmail: extractedData.recipientEmail || "student@example.com",
-                recipientId: extractedData.recipientId,
-                recipientWallet: address,
-                documentType: extractedData.documentType,
-                documentDescription: "Issued via AcadLedger Protocol",
-                documentHash: documentHash,
-                embedding: [], // Embeddings not strictly required for hash-based verification
-                documentId: crypto.randomUUID()
-            });
-
-            const cid = regResponse.data.cid;
+            // Register metadata on IPFS (optional)
+            try {
+                const legacy = aiResult ? toLegacyFormat(aiResult) : null;
+                await axios.post("/api/register", {
+                    recipientName: legacy?.recipientName || "Batch",
+                    recipientEmail: legacy?.recipientEmail || "",
+                    recipientId: legacy?.recipientId || "",
+                    recipientWallet: address,
+                    documentType: legacy?.documentType || "BATCH",
+                    documentDescription: mode === 'bulk' ? `Merkle Root: ${bulkHashes.length} documents` : "Issued via Trustless Attestation Protocol",
+                    documentHash: documentHash,
+                    embedding: [],
+                    documentId: crypto.randomUUID()
+                });
+            } catch {
+                console.warn("IPFS registration skipped.");
+            }
 
             setStep('attesting');
-            // Step 4: Anchor on Chain
-            const result = await attestOnChain(documentHash, "ipfs://" + cid);
+            const result = await attestOnChain(documentHash, "");
 
             if (result.success && result.txHash) {
                 setTxHash(result.txHash);
@@ -225,8 +327,7 @@ function DemoWorkflow({ address }: { address: string }) {
                 setStep('error');
             }
         } catch (err: any) {
-            console.error(err);
-            setError(err.response?.data?.message || err.message || "Protocol execution error");
+            setError(err.message || "Protocol execution error");
             setStep('error');
         }
     };
@@ -234,24 +335,60 @@ function DemoWorkflow({ address }: { address: string }) {
     const reset = () => {
         setStep('idle');
         setUploadedPreview(null);
-        setExtractedData(null);
+        setAiResult(null);
         setDocumentHash(null);
+        setComputedFileHash(null);
+        setComputedDataHash(null);
         setTxHash(null);
         setError(null);
         setJsonContent(null);
         setShowJson(false);
+        setBulkFiles([]);
+        setBulkHashes([]);
+        setMerkleRoot(null);
     };
 
     return (
         <div className="space-y-12">
+            {/* Mode Toggle + Policy */}
+            <div className="max-w-4xl mx-auto space-y-6">
+                <div className="flex flex-col md:flex-row justify-center items-center gap-4">
+                    <div className="flex bg-white/5 border border-white/10 rounded-2xl p-1 gap-1">
+                        <button onClick={() => { setMode('single'); reset(); }}
+                            className={`flex items-center gap-2 px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${mode === 'single' ? 'bg-purple-500 text-white shadow-lg shadow-purple-500/20' : 'text-slate-500 hover:text-slate-300'}`}>
+                            <Hash className="h-3.5 w-3.5" /> Single
+                        </button>
+                        <button onClick={() => { setMode('bulk'); reset(); }}
+                            className={`flex items-center gap-2 px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${mode === 'bulk' ? 'bg-cyan-500 text-white shadow-lg shadow-cyan-500/20' : 'text-slate-500 hover:text-slate-300'}`}>
+                            <Layers className="h-3.5 w-3.5" /> Bulk (Merkle)
+                        </button>
+                    </div>
+
+                    <div className="flex bg-white/5 border border-white/10 rounded-2xl p-1 gap-1">
+                        <button onClick={() => setAnchorMode('strict')}
+                            className={`flex flex-col items-center justify-center px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${anchorMode === 'strict' ? 'bg-white/10 text-white border border-white/20' : 'text-slate-500 hover:text-slate-300 border border-transparent'}`}>
+                            <span className="text-purple-400">Exact File Match</span>
+                            <span className="text-[8px] font-normal opacity-70">Raw Bytes Hash</span>
+                        </button>
+                        <button onClick={() => setAnchorMode('easy')}
+                            className={`flex flex-col items-center justify-center px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${anchorMode === 'easy' ? 'bg-white/10 text-white border border-white/20' : 'text-slate-500 hover:text-slate-300 border border-transparent'}`}>
+                            <span className="text-cyan-400">Smart AI Match</span>
+                            <span className="text-[8px] font-normal opacity-70">Extracted JSON Hash</span>
+                        </button>
+                    </div>
+                </div>
+
+                <PolicyControls policy={policy} setPolicy={setPolicy} />
+            </div>
+
             {/* Step Indicators */}
             <div className="flex justify-between max-w-4xl mx-auto px-4 relative mb-16">
                 <div className="absolute top-1/2 left-0 w-full h-0.5 bg-white/5 -translate-y-1/2 -z-10" />
                 {[
                     { id: 'S1', label: 'Capture', active: step !== 'idle' },
-                    { id: 'S2', label: 'Neural Parse', active: !!extractedData || step === 'extracting' },
-                    { id: 'S3', label: 'Hash Digest', active: !!documentHash || step === 'hashing' },
-                    { id: 'S4', label: 'L2 Anchor', active: step === 'complete' || step === 'attesting' }
+                    { id: 'S2', label: 'AI Extract', active: !!aiResult || step === 'extracting' },
+                    { id: 'S3', label: mode === 'bulk' ? 'Merkle Root' : 'SHA-256', active: !!documentHash || step === 'hashing' },
+                    { id: 'S4', label: 'On-Chain', active: step === 'complete' || step === 'attesting' }
                 ].map((s, idx) => (
                     <div key={idx} className="flex flex-col items-center gap-3">
                         <div className={`h-12 w-12 rounded-2xl flex items-center justify-center border-2 transition-all duration-500 ${s.active ? 'bg-cyber-gradient border-white/20 shadow-[0_0_20px_rgba(168,85,247,0.4)] scale-110' : 'bg-[#020617] border-white/5 text-slate-600'}`}>
@@ -271,14 +408,20 @@ function DemoWorkflow({ address }: { address: string }) {
                                 <div className="h-10 w-10 glassmorphism rounded-xl flex items-center justify-center text-xs font-sans font-bold text-purple-400 border-purple-500/30">
                                     S1
                                 </div>
-                                <h3 className="text-xl font-bold uppercase tracking-widest text-white/90">Visual_Capture</h3>
+                                <h3 className="text-xl font-bold uppercase tracking-widest text-white/90">{mode === 'bulk' ? 'Bulk_Capture' : 'Visual_Capture'}</h3>
                             </div>
                             {uploadedPreview && <div className="text-[10px] font-sans font-bold text-purple-400/60 animate-pulse uppercase tracking-[0.2em]">Stream_Active</div>}
                         </div>
 
                         <label className="block cursor-pointer group">
-                            <div className={`relative border-2 border-dashed rounded-[2rem] p-4 min-h-[300px] flex items-center justify-center transition-all ${uploadedPreview ? 'border-purple-500/20 bg-black/40' : 'border-white/5 hover:border-purple-500/40 hover:bg-white/5'}`}>
-                                {uploadedPreview ? (
+                            <div className={`relative border-2 border-dashed rounded-[2rem] p-4 min-h-[300px] flex items-center justify-center transition-all ${uploadedPreview || bulkFiles.length > 0 ? 'border-purple-500/20 bg-black/40' : 'border-white/5 hover:border-purple-500/40 hover:bg-white/5'}`}>
+                                {mode === 'bulk' && bulkFiles.length > 0 ? (
+                                    <div className="text-center space-y-4">
+                                        <Layers className="h-16 w-16 text-cyan-400 mx-auto" />
+                                        <p className="text-white font-bold text-lg">{bulkFiles.length} Documents Loaded</p>
+                                        {merkleRoot && <p className="text-[10px] font-mono text-cyan-400/80 break-all bg-cyan-500/5 p-3 rounded-xl border border-cyan-500/10">Merkle Root: {merkleRoot}</p>}
+                                    </div>
+                                ) : uploadedPreview ? (
                                     <div className="relative w-full max-w-sm mx-auto overflow-hidden rounded-2xl shadow-2xl border border-white/5">
                                         {fileType?.startsWith('image/') ? (
                                             <div className="relative overflow-hidden">
@@ -308,28 +451,27 @@ function DemoWorkflow({ address }: { address: string }) {
                                         <div className="h-20 w-20 bg-white/5 rounded-[1.5rem] flex items-center justify-center mx-auto mb-6 border border-white/10 text-slate-500 group-hover:text-purple-400 group-hover:scale-110 transition-all">
                                             <Upload className="h-10 w-10 transition-transform" />
                                         </div>
-                                        <p className="text-white font-bold text-lg mb-2 tracking-tight">Select Academic Source</p>
-                                        <p className="text-slate-500 text-sm font-light">Drag & drop certificate image or scan</p>
+                                        <p className="text-white font-bold text-lg mb-2 tracking-tight">{mode === 'bulk' ? 'Select Multiple Documents' : 'Select Credential Source'}</p>
+                                        <p className="text-slate-500 text-sm font-light">{mode === 'bulk' ? 'Select multiple files for batch attestation' : 'Upload certificate image or PDF'}</p>
                                     </div>
                                 )}
                             </div>
-                            <input type="file" className="hidden" accept="image/*,.pdf" onChange={handleFileUpload} />
+                            <input type="file" className="hidden" accept="image/*,.pdf"
+                                multiple={mode === 'bulk'}
+                                onChange={mode === 'bulk' ? handleBulkUpload : handleFileUpload} />
                         </label>
                     </div>
 
-                    {/* AI Block */}
-                    <div className={`p-8 rounded-[2.5rem] border transition-all duration-700 relative group/parser ${step === 'extracting' ? 'bg-cyan-500/5 border-cyan-500/30 shadow-2xl shadow-cyan-500/5' : extractedData ? 'glassmorphism border-white/10 hover:border-white/20 hover:shadow-2xl hover:shadow-cyan-500/5' : 'opacity-20 grayscale pointer-events-none scale-95'}`}>
+                    {/* AI Extraction Block */}
+                    <div className={`p-8 rounded-[2.5rem] border transition-all duration-700 relative group/parser ${step === 'extracting' ? 'bg-cyan-500/5 border-cyan-500/30 shadow-2xl shadow-cyan-500/5' : (aiResult || jsonContent) ? 'glassmorphism border-white/10 hover:border-white/20 hover:shadow-2xl hover:shadow-cyan-500/5' : 'opacity-20 grayscale pointer-events-none scale-95'}`}>
                         <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/5 via-transparent to-transparent opacity-0 group-hover/parser:opacity-100 transition-opacity rounded-[2.5rem]" />
                         <div className="flex items-center gap-4 mb-8 relative z-10">
-                            <div className={`h-10 w-10 glassmorphism rounded-xl flex items-center justify-center text-xs font-mono font-bold border transition-all duration-500 group-hover/parser:scale-110 group-hover/parser:border-cyan-500/50 ${extractedData ? 'text-cyan-400 border-cyan-500/30 shadow-[0_0_15px_rgba(34,211,238,0.2)]' : 'text-slate-600 border-white/5'}`}>
+                            <div className={`h-10 w-10 glassmorphism rounded-xl flex items-center justify-center text-xs font-mono font-bold border transition-all duration-500 ${(aiResult || jsonContent) ? 'text-cyan-400 border-cyan-500/30 shadow-[0_0_15px_rgba(34,211,238,0.2)]' : 'text-slate-600 border-white/5'}`}>
                                 S2
                             </div>
-                            <h3 className="text-xl font-bold uppercase tracking-widest text-white/90 group-hover/parser:text-white transition-colors">Neural_Parser</h3>
+                            <h3 className="text-xl font-bold uppercase tracking-widest text-white/90">{mode === 'bulk' ? 'Batch_Data_&_JSON' : 'AI_Extraction'}</h3>
                             <div className="ml-auto flex items-center gap-3">
-                                {fileName && <span className="text-[10px] font-mono text-cyan-400/60 bg-cyan-500/5 px-3 py-1 rounded-full border border-cyan-500/10 max-w-[120px] truncate group-hover/parser:border-cyan-500/30 transition-all">{fileName}</span>}
-                                <div className="h-10 w-10 p-1 rounded-xl bg-white/5 flex items-center justify-center overflow-hidden border border-white/10 group-hover/parser:scale-110 group-hover/parser:rotate-3 transition-transform duration-500 shadow-xl shadow-cyan-500/5">
-                                    <img src="/New Project 100 [31F474F].png" alt="AcadLedger Logo" className="w-full h-full object-cover" />
-                                </div>
+                                {fileName && <span className="text-[10px] font-mono text-cyan-400/60 bg-cyan-500/5 px-3 py-1 rounded-full border border-cyan-500/10 max-w-[120px] truncate">{fileName}</span>}
                             </div>
                         </div>
 
@@ -338,150 +480,172 @@ function DemoWorkflow({ address }: { address: string }) {
                                 <div className="flex gap-1">
                                     {[1, 2, 3].map(i => <div key={i} className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: `${i * 0.2}s` }} />)}
                                 </div>
-                                <span className="text-xs font-sans font-bold text-cyan-400 tracking-widest uppercase animate-pulse">Analyzing_Document_Fabric...</span>
+                                <span className="text-xs font-sans font-bold text-cyan-400 tracking-widest uppercase animate-pulse">{mode === 'bulk' ? 'Processing_Batch...' : 'Extracting_Data...'}</span>
                             </div>
                         )}
 
-                        {extractedData && (
+                        {aiResult && (
                             <div className="space-y-6 animate-in fade-in duration-1000">
-                                <div className="grid grid-cols-2 gap-x-8 gap-y-6">
-                                    <DataField label="Recipient_Identity" value={extractedData.recipientName} className="animate-in fade-in slide-in-from-bottom-4 duration-500" />
-                                    <DataField label="Credential_UID" value={extractedData.recipientId} isMono className="animate-in fade-in slide-in-from-bottom-4 duration-700" />
-                                    <DataField
-                                        label="Schema_Type"
-                                        value={extractedData.documentType}
-                                        className="col-span-2 animate-in fade-in slide-in-from-bottom-4 duration-1000"
-                                        isSpecial
-                                    />
+                                {/* Dynamic field grid — shows ALL extracted fields */}
+                                <div className="grid grid-cols-2 gap-3">
+                                    {Object.entries(aiResult.structuredData).map(([key, value]) => (
+                                        <div key={key} className={`p-3 rounded-xl bg-white/[0.02] border border-white/5 ${key.toLowerCase().includes('name') || key.toLowerCase().includes('institution') ? 'col-span-2' : ''}`}>
+                                            <span className="text-[9px] text-slate-500 uppercase tracking-widest font-bold block mb-1">{key.replace(/([A-Z])/g, ' $1').trim()}</span>
+                                            <span className="text-sm text-white font-medium">{String(value)}</span>
+                                        </div>
+                                    ))}
                                 </div>
 
                                 <div className="flex flex-wrap items-center gap-3">
-                                    <div className={`flex items-center gap-2 px-4 py-2 rounded-full border text-[10px] font-bold tracking-[0.2em] uppercase shadow-sm transition-all duration-500 hover:scale-105 ${extractedData.isFraudulent ? 'bg-red-500/10 border-red-500/20 text-red-500 hover:border-red-500/50' : 'bg-green-500/10 border-green-500/20 text-green-500 hover:border-green-500/50'}`}>
-                                        {extractedData.isFraudulent ? <AlertCircle className="h-3.5 w-3.5" /> : <CheckCircle className="h-3.5 w-3.5" />}
-                                        {extractedData.isFraudulent ? 'TAMPER_DETECTED' : 'INTEGRITY_VERIFIED'}
-                                    </div>
-                                    <Button
-                                        onClick={() => setShowJson(!showJson)}
-                                        variant="outline"
-                                        className="h-9 px-4 rounded-full border-cyan-500/20 bg-cyan-500/5 text-[10px] font-black tracking-widest text-cyan-400 hover:bg-cyan-500/10 uppercase transition-all"
-                                    >
-                                        <Cpu className="h-3 w-3 mr-2" />
-                                        {showJson ? "Hide Core JSON" : "Extract JSON"}
-                                    </Button>
-                                </div>
-                                <div className="text-right group/score pt-6 border-t border-white/5 mt-6">
-                                    <span className="text-[10px] text-slate-500 uppercase font-bold tracking-widest block mb-1 group-hover/score:text-cyan-400 transition-colors">Conf_Score</span>
-                                    <div className="flex items-center gap-2 justify-end">
-                                        <div className="w-12 h-1 bg-white/5 rounded-full overflow-hidden hidden sm:block">
-                                            <div
-                                                className="h-full bg-cyan-400 shadow-[0_0_10px_#22d3ee]"
-                                                style={{ width: `${(extractedData.confidenceScore || 0.99) * 100}%` }}
-                                            />
-                                        </div>
-                                        <span className="text-cyan-400 font-sans text-xl font-bold group-hover/score:scale-110 transition-transform block">
-                                            {typeof extractedData.confidenceScore === 'number' && !isNaN(extractedData.confidenceScore)
-                                                ? (extractedData.confidenceScore * 100).toFixed(0)
-                                                : "99"}%
-                                        </span>
+                                    <div className={`flex items-center gap-2 px-4 py-2 rounded-full border text-[10px] font-bold tracking-[0.2em] uppercase ${aiResult.documentType === 'ORIGINAL' ? 'bg-green-500/10 border-green-500/20 text-green-500' :
+                                        aiResult.documentType === 'PHOTOCOPY' ? 'bg-amber-500/10 border-amber-500/20 text-amber-500' :
+                                            'bg-blue-500/10 border-blue-500/20 text-blue-500'
+                                        }`}>
+                                        {aiResult.documentType === 'ORIGINAL' ? <CheckCircle className="h-3.5 w-3.5" /> : <AlertCircle className="h-3.5 w-3.5" />}
+                                        AI Detected: {aiResult.documentType}
                                     </div>
                                 </div>
 
-                                {showJson && jsonContent && (
-                                    <div className="mt-8 animate-in slide-in-from-top-4 duration-500 relative z-[100] border-t border-cyan-500/20 pt-8">
-                                        <div className="flex items-center justify-between mb-4 px-2">
-                                            <div className="flex items-center gap-3">
-                                                <div className="p-2 rounded-lg bg-cyan-500/10">
-                                                    <Cpu className="h-4 w-4 text-cyan-400" />
-                                                </div>
-                                                <span className="text-[11px] font-bold text-slate-300 tracking-[0.25em] uppercase">Core_Identity_Matrix</span>
-                                            </div>
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                className="h-9 font-bold text-cyan-400/80 hover:text-white hover:bg-cyan-500/20 px-4 rounded-xl border border-cyan-500/10"
-                                                onClick={(e) => {
-                                                    e.preventDefault();
-                                                    const blob = new Blob([jsonContent], { type: 'application/json' });
-                                                    const url = URL.createObjectURL(blob);
-                                                    const a = document.createElement('a');
-                                                    a.href = url;
-                                                    a.download = `AcadLedger_Proof_${extractedData.recipientId}.json`;
-                                                    a.click();
-                                                }}
-                                            >
-                                                Export .JSON
-                                            </Button>
+                                <div className="text-right group/score pt-4 border-t border-white/5">
+                                    <span className="text-[10px] text-slate-500 uppercase font-bold tracking-widest block mb-1">Extraction Confidence</span>
+                                    <div className="flex items-center gap-2 justify-end">
+                                        <div className="w-16 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                                            <div className="h-full bg-cyan-400 shadow-[0_0_10px_#22d3ee]" style={{ width: `${aiResult.extractionConfidence * 100}%` }} />
                                         </div>
-                                        <div className="bg-[#020617] border border-cyan-500/20 rounded-[1.5rem] p-6 shadow-[0_0_30px_rgba(34,211,238,0.1)] overflow-hidden relative group/json">
-                                            <div className="absolute top-0 right-0 p-6 opacity-[0.05] pointer-events-none group-hover/json:opacity-10 transition-opacity">
-                                                <Cpu className="h-24 w-24 text-cyan-400" />
-                                            </div>
-                                            <pre className="text-[10px] font-sans font-medium text-cyan-300/90 leading-relaxed overflow-x-auto custom-scrollbar max-h-[350px] relative z-20">
-                                                {jsonContent}
-                                            </pre>
-                                        </div>
+                                        <span className="text-cyan-400 font-sans text-xl font-bold">{(aiResult.extractionConfidence * 100).toFixed(0)}%</span>
+                                    </div>
+                                </div>
+
+                                {aiResult.advisoryNotes.length > 0 && (
+                                    <div className="space-y-1 pt-2">
+                                        {aiResult.advisoryNotes.map((note, i) => (
+                                            <p key={i} className="text-[10px] text-slate-500 pl-3 border-l border-slate-700">💡 {note}</p>
+                                        ))}
                                     </div>
                                 )}
+                            </div>
+                        )}
+
+                        {/* JSON always visible when generated (Single or Bulk) */}
+                        {jsonContent && (
+                            <div className="mt-4 border-t border-cyan-500/20 pt-4 animate-in fade-in duration-1000 relative z-10 glassmorphism p-4 rounded-2xl">
+                                <div className="flex items-center justify-between mb-3">
+                                    <span className="text-[11px] font-bold text-slate-300 tracking-widest uppercase">
+                                        {mode === 'bulk' ? 'Merkle Proof Batch (.json)' : 'Full Extraction JSON'}
+                                    </span>
+                                    <Button variant="ghost" size="sm" className="h-8 bg-cyan-500/10 text-cyan-400 hover:text-white px-3 rounded-xl border border-cyan-500/30 shadow-[0_0_15px_rgba(34,211,238,0.15)]"
+                                        onClick={(e) => {
+                                            e.preventDefault();
+                                            const blob = new Blob([jsonContent], { type: 'application/json' });
+                                            const url = URL.createObjectURL(blob);
+                                            const a = document.createElement('a');
+                                            a.href = url;
+                                            a.download = mode === 'bulk' ? `TAP_Merkle_Batch_${Date.now()}.json` : `TAP_Attestation_${Date.now()}.json`;
+                                            a.click();
+                                        }}>
+                                        Download Proofs
+                                    </Button>
+                                </div>
+                                <pre className="bg-black/60 border border-cyan-500/20 rounded-2xl p-5 text-[10px] font-mono text-cyan-300/90 overflow-auto max-h-[250px]">{jsonContent}</pre>
                             </div>
                         )}
                     </div>
                 </div>
 
-                {/* Right Column: Cryptography & Chain */}
+                {/* Right Column: Hash + Chain */}
                 <div className="space-y-8 animate-in slide-in-from-right duration-700">
                     {/* Hash Block */}
                     <div className={`p-8 rounded-[2.5rem] border transition-all duration-700 ${step === 'hashing' ? 'bg-purple-500/5 border-purple-500/30' : documentHash ? 'glassmorphism border-white/10' : 'opacity-20 grayscale pointer-events-none scale-95'}`}>
                         <div className="flex items-center gap-4 mb-8">
-                            <div className="h-10 w-10 glassmorphism rounded-xl flex items-center justify-center text-xs font-bold text-purple-400 border-purple-500/30">
-                                S3
-                            </div>
-                            <h3 className="text-xl font-bold uppercase tracking-widest text-white/90">Digest_Generation</h3>
+                            <div className="h-10 w-10 glassmorphism rounded-xl flex items-center justify-center text-xs font-bold text-purple-400 border-purple-500/30">S3</div>
+                            <h3 className="text-xl font-bold uppercase tracking-widest text-white/90">{mode === 'bulk' ? 'Merkle_Root' : 'SHA-256_Digest'}</h3>
                         </div>
-
                         {documentHash && (
                             <div className="bg-black/60 rounded-[1.5rem] p-6 border border-white/5 group relative">
-                                <div className="absolute top-2 right-4 text-[8px] font-sans text-slate-600 group-hover:text-purple-400 transition-colors uppercase tracking-widest font-bold">ALGORITHM_KECCAK_256</div>
-                                <p className="text-green-500 font-mono text-[10px] sm:text-xs leading-relaxed break-all p-4 bg-green-500/5 rounded-xl border border-green-500/10 hover:border-green-500/40 transition-all duration-500 select-all">
+                                <div className={`absolute top-2 right-4 text-[8px] font-sans transition-colors uppercase tracking-widest font-bold ${anchorMode === 'strict' ? 'text-purple-400' : 'text-cyan-400'}`}>
+                                    {mode === 'bulk' ? `MERKLE_ROOT (${anchorMode})` : `ALGORITHM_SHA256 (${anchorMode})`}
+                                </div>
+                                <p className="text-green-500 font-mono text-[10px] sm:text-xs leading-relaxed break-all p-4 bg-green-500/5 rounded-xl border border-green-500/10 hover:border-green-500/40 transition-all select-all mt-4">
                                     {documentHash}
                                 </p>
+                                {mode === 'bulk' && bulkHashes.length > 0 && (
+                                    <p className="text-[10px] text-slate-500 mt-3 text-center">{bulkHashes.length} leaf hashes → 1 Merkle root</p>
+                                )}
+                                {mode === 'single' && (
+                                    <p className="text-[9px] text-slate-500 mt-3 text-center">
+                                        {anchorMode === 'strict'
+                                            ? "Cryptographically anchored to exact file bytes (Secure against pixel-level tampering)."
+                                            : "Anchored to AI-extracted JSON data (Resilient to screenshots & photocopies)."}
+                                    </p>
+                                )}
                             </div>
                         )}
                     </div>
 
                     {/* Blockchain Block */}
-                    <div className={`p-8 rounded-[2.5rem] border transition-all duration-1000 ${step === 'attesting' ? 'bg-cyber-gradient/10 border-white/30 animate-glow-pulse shadow-2xl shadow-purple-500/10' : txHash ? 'bg-green-500/[0.03] border-green-500/30' : 'opacity-20 grayscale pointer-events-none scale-95'}`}>
+                    <div className={`p-8 rounded-[2.5rem] border transition-all duration-1000 ${step === 'attesting' ? 'bg-cyber-gradient/10 border-white/30 shadow-2xl shadow-purple-500/10' : txHash ? 'bg-green-500/[0.03] border-green-500/30' : 'opacity-20 grayscale pointer-events-none scale-95'}`}>
                         <div className="flex items-center gap-4 mb-8">
-                            <div className={`h-10 w-10 glassmorphism rounded-xl flex items-center justify-center text-xs font-bold border transition-all ${txHash ? 'text-green-400 border-green-500/30' : 'text-slate-600 border-white/5'}`}>
-                                S4
-                            </div>
-                            <h3 className="text-xl font-bold uppercase tracking-widest text-white/90">L2_Attestation</h3>
+                            <div className={`h-10 w-10 glassmorphism rounded-xl flex items-center justify-center text-xs font-bold border transition-all ${txHash ? 'text-green-400 border-green-500/30' : 'text-slate-600 border-white/5'}`}>S4</div>
+                            <h3 className="text-xl font-bold uppercase tracking-widest text-white/90">On-Chain_Anchor</h3>
                         </div>
 
                         {txHash && (
-                            <div className="space-y-6 animate-in fade-in zoom-in duration-1000">
+                            <div className="space-y-5 animate-in fade-in zoom-in duration-1000">
+                                {/* Success Banner */}
                                 <div className="flex items-center gap-4 p-5 rounded-2xl bg-green-500/10 border border-green-500/20 text-green-400">
                                     <div className="p-2 rounded-full bg-green-500/20 shadow-[0_0_15px_rgba(34,197,94,0.3)]">
                                         <CheckCircle className="h-6 w-6" />
                                     </div>
                                     <div>
                                         <p className="font-bold text-sm tracking-tight text-white">Anchored Successfully</p>
-                                        <p className="text-[10px] font-sans font-bold text-green-500/80">STATE: FINALIZED_ON_LAYER_2</p>
+                                        <p className="text-[10px] font-sans font-bold text-green-500/80">FINALIZED ON POLYGON AMOY</p>
                                     </div>
                                 </div>
 
-                                <div className="bg-black/60 rounded-2xl p-6 border border-white/5">
-                                    <span className="text-[10px] text-slate-500 uppercase font-bold tracking-widest block mb-2">TX_IDENTITY</span>
-                                    <p className="text-slate-400 font-sans font-bold text-[10px] break-all leading-normal opacity-80">{txHash}</p>
+                                {/* 🔒 INSTITUTION-ONLY: Full Proof of Commitment */}
+                                <div className="p-5 rounded-2xl bg-purple-500/5 border border-purple-500/20">
+                                    <div className="flex items-center gap-2 mb-4">
+                                        <Shield className="h-4 w-4 text-purple-400" />
+                                        <span className="text-[10px] font-black text-purple-400 uppercase tracking-widest">Proof of Commitment (Institution Only)</span>
+                                    </div>
+
+                                    {/* Extracted Data Summary */}
+                                    {aiResult && (
+                                        <div className="mb-4">
+                                            <span className="text-[9px] text-slate-500 uppercase tracking-widest font-bold block mb-2">Hashed Data</span>
+                                            <div className="bg-black/60 rounded-xl p-4 border border-white/5 max-h-[200px] overflow-auto">
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    {Object.entries(aiResult.structuredData).map(([key, value]) => (
+                                                        <div key={key} className="text-[10px]">
+                                                            <span className="text-slate-600 uppercase">{key}: </span>
+                                                            <span className="text-slate-300 font-medium">{String(value)}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* SHA-256 Hash */}
+                                    {documentHash && (
+                                        <div className="mb-4">
+                                            <span className="text-[9px] text-slate-500 uppercase tracking-widest font-bold block mb-2">SHA-256 Fingerprint</span>
+                                            <p className="text-green-500 font-mono text-[10px] break-all p-3 bg-green-500/5 rounded-xl border border-green-500/10 select-all">{documentHash}</p>
+                                        </div>
+                                    )}
+
+                                    {/* TX Hash */}
+                                    <div>
+                                        <span className="text-[9px] text-slate-500 uppercase tracking-widest font-bold block mb-2">Transaction Hash</span>
+                                        <p className="text-slate-400 font-mono text-[10px] break-all p-3 bg-black/40 rounded-xl border border-white/5">{txHash}</p>
+                                    </div>
                                 </div>
 
-                                <a
-                                    href={`https://cardona-zkevm.polygonscan.com/tx/${txHash}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="flex items-center justify-center h-12 w-full rounded-xl bg-white/5 border border-white/10 text-white font-sans font-bold text-xs uppercase tracking-widest hover:bg-white/10 hover:border-purple-500/40 transition-all group"
-                                >
+                                {/* Polygonscan Link */}
+                                <a href={`https://amoy.polygonscan.com/tx/${txHash}`} target="_blank" rel="noopener noreferrer"
+                                    className="flex items-center justify-center h-12 w-full rounded-xl bg-white/5 border border-white/10 text-white font-bold text-xs uppercase tracking-widest hover:bg-white/10 hover:border-purple-500/40 transition-all group">
                                     <ExternalLink className="mr-2 h-4 w-4 group-hover:scale-110 transition-transform" />
-                                    Explore_Block
+                                    View on Polygonscan
                                 </a>
                             </div>
                         )}
@@ -489,34 +653,27 @@ function DemoWorkflow({ address }: { address: string }) {
                         {step === 'attesting' && (
                             <div className="flex flex-col items-center py-6">
                                 <Loader2 className="h-10 w-10 text-purple-400 animate-spin mb-4" />
-                                <p className="text-slate-400 text-xs font-mono tracking-widest animate-pulse">COMMITING_TO_CHAIN...</p>
+                                <p className="text-slate-400 text-xs font-mono tracking-widest animate-pulse">COMMITTING_TO_AMOY...</p>
                             </div>
                         )}
                     </div>
 
-                    {/* Final Actions */}
+                    {/* Actions */}
                     <div className="pt-4 lg:pt-8">
-                        {step === 'extracted' && !extractedData?.isFraudulent && (
-                            <Button
-                                onClick={handleAttest}
-                                className="w-full h-20 rounded-[1.75rem] bg-cyber-gradient text-white font-bold text-xl shadow-2xl shadow-purple-500/30 hover:shadow-purple-500/50 hover:scale-[1.03] active:scale-[0.98] transition-all duration-300 group"
-                            >
+                        {step === 'extracted' && (
+                            <Button onClick={handleAttest}
+                                className="w-full h-20 rounded-[1.75rem] bg-cyber-gradient text-white font-bold text-xl shadow-2xl shadow-purple-500/30 hover:shadow-purple-500/50 hover:scale-[1.03] active:scale-[0.98] transition-all duration-300 group">
                                 <Cpu className="mr-3 h-7 w-7 transition-all group-hover:rotate-12" />
-                                Commit Attestation
+                                {mode === 'bulk' ? 'Commit Merkle Root' : 'Commit Attestation'}
                             </Button>
                         )}
-
                         {step === 'complete' && (
-                            <Button
-                                onClick={reset}
-                                className="w-full h-16 rounded-[1.5rem] bg-white/5 border border-white/10 text-white hover:bg-white/10 hover:border-green-500/40 font-bold text-lg transition-all shadow-lg"
-                            >
+                            <Button onClick={reset} className="w-full h-16 rounded-[1.5rem] bg-white/5 border border-white/10 text-white hover:bg-white/10 font-bold text-lg transition-all shadow-lg">
                                 <Sparkles className="mr-3 h-6 w-6 text-green-400" /> Issue New Credential
                             </Button>
                         )}
-
                         {error && (
-                            <div className="p-6 bg-red-500/10 border border-red-500/20 rounded-[1.5rem] text-red-400 flex items-start gap-4 animate-in slide-in-from-bottom-2 shadow-xl shadow-red-500/5">
+                            <div className="p-6 bg-red-500/10 border border-red-500/20 rounded-[1.5rem] text-red-400 flex items-start gap-4 animate-in slide-in-from-bottom-2">
                                 <AlertCircle className="h-6 w-6 flex-shrink-0 mt-0.5" />
                                 <div className="flex flex-col gap-1">
                                     <span className="text-xs font-black uppercase tracking-widest">Protocol_Error</span>
@@ -527,7 +684,7 @@ function DemoWorkflow({ address }: { address: string }) {
                     </div>
                 </div>
             </div>
-        </div >
+        </div>
     );
 }
 
@@ -541,12 +698,9 @@ function DataField({ label, value, isMono = false, isSpecial = false, className 
             <div className={`
                 relative overflow-hidden px-4 py-3.5 rounded-2xl 
                 transition-all duration-300 shadow-sm border
-                ${isSpecial
-                    ? 'bg-gradient-to-r from-cyan-500/[0.05] to-purple-500/[0.05] border-white/5 group-hover/field:border-cyan-500/40'
-                    : 'bg-white/[0.02] border-white/[0.04] group-hover/field:border-cyan-500/20 group-hover/field:bg-white/[0.04]'}
+                ${isSpecial ? 'bg-gradient-to-r from-cyan-500/[0.05] to-purple-500/[0.05] border-white/5' : 'bg-white/[0.02] border-white/[0.04]'}
                 ${isMono ? 'font-mono text-xs font-semibold' : 'font-sans font-semibold text-[15px] tracking-tight'}
             `}>
-                <div className="absolute inset-0 bg-gradient-to-tr from-cyan-500/5 to-transparent opacity-0 group-hover/field:opacity-100 transition-opacity" />
                 <span className={`relative z-10 ${isSpecial ? 'bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-purple-400 font-bold' : 'text-white/90'}`}>
                     {value || 'NOT_DECODED'}
                 </span>
